@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+set -euo pipefail
+action="${1:-}"; drill="${2:-}"
+case "$drill" in linux-0[1-6]-*) :;; *) echo 'Unknown Linux exercise' >&2; exit 2;; esac
+run() { docker exec academy-linux bash -c "$1"; }
+if [ "$action" = start ]; then
+  docker rm -f academy-linux >/dev/null 2>&1 || true
+  # Everything is local. No network or privileged mounts in the container.
+  docker run --pull=never -d --name academy-linux --network none --memory 512m --cpus 1 \
+    --pids-limit 128 academy-linux:1.0.0 sleep infinity >/dev/null
+  run 'mkdir -p /work'
+  case "$drill" in
+    linux-01-files) ;;
+    linux-02-permissions) run 'printf "#!/bin/sh\necho lab-ok\n" >/work/check.sh; chmod 600 /work/check.sh';;
+    linux-03-search) run 'printf "INFO started\nERROR disk full\nINFO retry\nERROR failed to save\n" > /work/application.log';;
+    linux-04-processes) run 'sleep 600 >/dev/null 2>&1 &';;
+    linux-05-archive) run 'mkdir -p /work/project; printf "alpha\n" >/work/project/a.txt; printf "bravo\n" >/work/project/b.txt';;
+    linux-06-environment) ;;
+    *) echo 'Unknown Linux exercise' >&2; exit 2;;
+  esac
+  printf 'Exercise prepared. Enter the container: docker exec -it academy-linux bash\n'
+  exit 0
+fi
+if [ "$action" = check ]; then
+  case "$drill" in
+    linux-01-files) check='test "$(cat /work/handover/notes.txt 2>/dev/null)" = "ready for shift"';;
+    linux-02-permissions) check='test "$(stat -c %a:%U:%G /work/check.sh)" = "750:root:root"';;
+    linux-03-search) check='diff <(grep ERROR /work/application.log) /work/errors.txt';;
+    linux-04-processes) check='! ps -eo args | grep -E "^sleep 600$"';;
+    linux-05-archive) check='mkdir -p /tmp/verify; tar -xzf /work/project.tar.gz -C /tmp/verify; cmp /work/project/a.txt /tmp/verify/project/a.txt && cmp /work/project/b.txt /tmp/verify/project/b.txt';;
+    linux-06-environment) check='source /work/shift.env; test "${SHIFT_NAME:-}" = bravo; env | grep -qx SHIFT_NAME=bravo';;
+  esac
+  if run "$check"; then printf 'PASS — exercise verified\n'; exit 0; else printf 'NOT YET — revisit the task and check again\n'; exit 1; fi
+fi
+if [ "$action" = hint ]; then
+  case "$drill" in
+    linux-01-files) echo 'mkdir -p creates missing parent folders. Redirect printf output into a file.';;
+    linux-02-permissions) echo 'stat -c %a:%U:%G reports numeric mode, owner and group.';;
+    linux-03-search) echo 'Use grep ERROR and redirect only its output.';;
+    linux-04-processes) echo 'ps -eo pid,args shows process IDs beside full command lines.';;
+    linux-05-archive) echo 'Use tar -C /work so the archive has relative paths.';;
+    linux-06-environment) echo 'A shell variable must be exported to appear in env.';;
+  esac
+elif [ "$action" = solution ]; then
+  case "$drill" in
+    linux-01-files) echo "mkdir -p /work/handover; printf 'ready for shift\n' > /work/handover/notes.txt";;
+    linux-02-permissions) echo 'chmod 750 /work/check.sh; chown root:root /work/check.sh';;
+    linux-03-search) echo 'grep ERROR /work/application.log > /work/errors.txt';;
+    linux-04-processes) echo 'ps -eo pid,args; kill <PID of sleep 600>';;
+    linux-05-archive) echo 'tar -czf /work/project.tar.gz -C /work project';;
+    linux-06-environment) echo "printf 'export SHIFT_NAME=bravo\n' > /work/shift.env";;
+  esac
+else
+  echo 'Unsupported action' >&2; exit 2
+fi

@@ -1,0 +1,21 @@
+# BROKEN ON PURPOSE: the container command exits immediately.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: crashy
+  namespace: netlab
+  labels: { app: crashy }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: crashy }
+  template:
+    metadata:
+      labels: { app: crashy }
+    spec:
+      containers:
+        - name: app
+          image: busybox:1.36
+          command: ["sh", "-c", "echo starting; sleep 2; echo 'FATAL: config not found'; exit 1"]
+          resources:
+            requests: { cpu: "10m", memory: "16Mi" }

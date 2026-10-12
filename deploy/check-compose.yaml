@@ -1,0 +1,30 @@
+name: academy-build-check
+# Synthetic credentials and repeated hexadecimal keys for isolated checks only.
+services:
+  database:
+    image: postgres:17-bookworm
+    environment: {POSTGRES_DB: academy_build_check, POSTGRES_USER: check, POSTGRES_PASSWORD: test-only-database-password}
+    tmpfs: [/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U check -d academy_build_check"]
+      interval: 2s
+      retries: 30
+  guacd:
+    image: guacamole/guacd:1.6.0
+  guacamole:
+    image: guacamole/guacamole:1.6.0
+    environment: {GUACD_HOSTNAME: guacd, JSON_ENABLED: "true", JSON_SECRET_KEY: "11111111111111111111111111111111"}
+  check:
+    image: training-academy:1.0.0
+    volumes: ["../tests:/checks:ro"]
+    command: ["python", "/checks/container_smoke.py"]
+    environment:
+      PYTHONPATH: /app:/checks
+      DATABASE_URL: postgresql+psycopg://check:test-only-database-password@database:5432/academy_build_check
+      MASTER_KEY: "2222222222222222222222222222222222222222222222222222222222222222"
+      GUAC_JSON_KEY: "11111111111111111111111111111111"
+      ADMIN_PASSWORD: TestOnly-Container-123!
+      COOKIE_SECURE: "true"
+    depends_on:
+      database: {condition: service_healthy}
+      guacamole: {condition: service_started}

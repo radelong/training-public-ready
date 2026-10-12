@@ -1,0 +1,20 @@
+{
+  "id": "linux-fundamentals",
+  "title": "Linux Fundamentals Lab",
+  "description": "Practice Linux administration in an isolated offline VM.",
+  "kind": "linux",
+  "template_id": 9100,
+  "cores": 2,
+  "memory": 4096,
+  "drills": [
+    {
+      "id": "linux-01-users",
+      "title": "Create and inspect a local user",
+      "brief": "Use the local Linux tools to create and inspect a training account.",
+      "goal": "The requested account exists with the assigned shell and group.",
+      "tools": "id, getent, useradd",
+      "time": "10 min",
+      "level": "1"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+.qa
+.git
+release
+assets/images
+assets/ubuntu
+assets/proxmox
+vendor
+docs
+tests
+secrets
+.env
+**/__pycache__

@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Training Academy</title>
+  <link rel="stylesheet" href="/static/academy.css">
+  <link rel="stylesheet" href="/static/academy-mobile.css">
+  <script src="/static/terminal-focus.js?v=20261010-1" defer></script>
+<script src="/static/academy.js?v=20261010-8" defer></script>
+<link rel="stylesheet" href="/static/learning.css?v=20261011-1">
+<script src="/static/learning.js?v=20261011-4" defer></script>
+</head>
+<body>
+<div id="login-view" class="login-layout">
+  <section class="login-intro"><div class="brand"><span class="brand-mark">A</span><span><strong>Training Academy</strong></span></div>
+    <div><p class="eyebrow">LOCAL TRAINING • HANDS-ON READINESS</p><h1>Build confidence.<br>Practice the work.</h1><p>Independent lab environments. Real troubleshooting. A place to learn, repeat and prepare for the next shift.</p>
+      <div class="login-topology"><span>CLIENT</span><i></i><span>ROUTER</span><i></i><span>SERVER</span></div></div>
+    <p class="small">Training and lab services operate on your local network.</p>
+  </section>
+  <section class="login-panel"><form id="login-form"><p class="eyebrow">WELCOME BACK</p><h2>Sign in to your academy</h2><p class="muted">Use the account provided by your training administrator.</p>
+    <label for="username">Username</label><input id="username" name="username" autocomplete="username" required>
+    <label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required>
+    <p id="login-error" role="alert" class="error"></p><button class="primary" type="submit">Sign in <span aria-hidden="true">→</span></button>
+    <p class="small muted">Need an account? Contact your local training administrator.</p>
+  </form></section>
+</div>
+<div id="app-view" class="app-layout" hidden>
+  <aside class="sidebar"><a class="brand" href="#catalog"><span class="brand-mark">A</span><span><strong>Training Academy</strong></span></a>
+    <p class="nav-label">YOUR WORKSPACE</p><nav aria-label="Main navigation"><button data-page="classes" class="nav">▤ <span>Class catalog</span></button><button data-page="catalog" class="nav active">▦ <span>Lab catalog</span></button><button data-page="sessions" class="nav">▣ <span>My lab sessions</span><span id="seat-count" class="nav-count">0</span></button><button data-page="results" class="nav">✓ <span>My results</span></button><button data-page="content" class="nav admin-only" hidden>▧ <span>Content manager</span></button><button data-page="admin" class="nav admin-only" hidden>⚙ <span>Administration</span></button><button data-page="account" class="nav">◉ <span>My account</span></button></nav>
+    <div class="sidebar-bottom"><span class="online-dot"></span> Local academy<p>All training stays on premises.</p></div>
+  </aside>
+  <div class="main"><header class="topbar"><div><span class="eyebrow">TRAINING / </span><span id="breadcrumb">Lab catalog</span></div><div class="user-menu"><span id="user-label"></span><button id="logout" class="text-button">Sign out</button></div></header>
+    <main id="content" tabindex="-1"></main><div id="toast" role="status" aria-live="polite" hidden></div>
+  </div>
+</div>
+<dialog id="confirm-dialog"><form method="dialog"><p class="eyebrow">LAB ACTION</p><h2 id="confirm-title"></h2><p id="confirm-text"></p><div class="button-row"><button value="cancel" class="secondary">Cancel</button><button value="confirm" class="danger" id="confirm-button">Continue</button></div></form></dialog>
+</body></html>

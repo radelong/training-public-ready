@@ -1,0 +1,60 @@
+# Sample netplan configurations. Put ONE of these in /etc/netplan/99-lab.yaml
+# (mode 600), then:
+#     sudo netplan generate    # syntax check only
+#     sudo netplan try         # apply with automatic rollback after 120s
+#     sudo netplan apply       # commit
+#
+# On a remote machine ALWAYS use "netplan try" first.
+
+# ---------------------------------------------------------------- static ----
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    ens18:
+      dhcp4: false
+      addresses:
+        - 10.10.1.10/24
+      routes:
+        - to: default
+          via: 10.10.1.1
+        - to: 10.10.2.0/24
+          via: 10.10.1.1
+      nameservers:
+        addresses: [1.1.1.1, 8.8.8.8]
+        search: [lab.local]
+      mtu: 1500
+
+# ------------------------------------------------ DHCP with overrides -------
+# network:
+#   version: 2
+#   ethernets:
+#     ens18:
+#       dhcp4: true
+#       dhcp4-overrides:
+#         use-dns: false
+#         route-metric: 100
+#       nameservers:
+#         addresses: [1.1.1.1]
+
+# ------------------------------------------------ two NICs, one default -----
+# network:
+#   version: 2
+#   ethernets:
+#     ens18:                       # WAN
+#       dhcp4: true
+#       dhcp4-overrides: { route-metric: 100 }
+#     ens19:                       # LAN, no default route
+#       dhcp4: false
+#       addresses: [10.10.1.1/24]
+
+# ------------------------------------------------ VLAN ----------------------
+# network:
+#   version: 2
+#   ethernets:
+#     ens18: { dhcp4: false }
+#   vlans:
+#     ens18.100:
+#       id: 100
+#       link: ens18
+#       addresses: [198.51.100.2/24]

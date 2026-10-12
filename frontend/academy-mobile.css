@@ -1,0 +1,10 @@
+.card-visual .motif { white-space: nowrap; }
+.card-visual { gap: 16px; }
+.card-visual .eyebrow { min-width: 0; }
+.card-visual .motif { flex-shrink: 0; }
+@media (max-width: 520px) {
+  .sidebar nav { display: grid; grid-template-columns: 1fr 1fr; overflow: visible; }
+  .nav { min-width: 0; width: 100%; }
+  .card-visual { padding: 20px; }
+  .card-visual .motif { font-size: 26px; letter-spacing: 3px; }
+}

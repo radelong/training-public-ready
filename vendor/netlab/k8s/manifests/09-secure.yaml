@@ -1,0 +1,44 @@
+# App plus a default-deny NetworkPolicy. The app is healthy; the policy is
+# what stops the toolbox pod from reaching it.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: secure
+  namespace: netlab
+  labels: { app: secure }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: secure }
+  template:
+    metadata:
+      labels: { app: secure }
+    spec:
+      containers:
+        - name: web
+          image: nginx:1.27-alpine
+          ports: [{ containerPort: 80 }]
+          resources:
+            requests: { cpu: "10m", memory: "16Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: secure
+  namespace: netlab
+spec:
+  selector: { app: secure }
+  ports: [{ port: 80, targetPort: 80 }]
+---
+# Deny ALL ingress to pods labelled app=secure. An empty "ingress:" list means
+# nothing is permitted; the presence of the policy is what makes it deny.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: secure-default-deny
+  namespace: netlab
+spec:
+  podSelector:
+    matchLabels: { app: secure }
+  policyTypes: ["Ingress"]
+  ingress: []

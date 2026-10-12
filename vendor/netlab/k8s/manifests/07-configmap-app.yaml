@@ -1,0 +1,41 @@
+# BROKEN ON PURPOSE: this Deployment references a ConfigMap and a Secret that
+# do not exist yet. Your job is to create them.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cfgapp
+  namespace: netlab
+  labels: { app: cfgapp }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: cfgapp }
+  template:
+    metadata:
+      labels: { app: cfgapp }
+    spec:
+      containers:
+        - name: app
+          image: busybox:1.36
+          command: ["sh", "-c", "sleep infinity"]
+          env:
+            - name: GREETING
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: GREETING
+            - name: API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: app-secret
+                  key: token
+          volumeMounts:
+            - name: config
+              mountPath: /etc/appconfig
+              readOnly: true
+          resources:
+            requests: { cpu: "10m", memory: "16Mi" }
+      volumes:
+        - name: config
+          configMap:
+            name: app-config

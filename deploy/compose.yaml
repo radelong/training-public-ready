@@ -1,0 +1,83 @@
+name: training-academy
+x-academy: &academy
+  image: training-academy:1.0.0
+  restart: unless-stopped
+  env_file: .env
+  user: "10001:10001"
+  volumes:
+    - ./secrets/pve-ca.pem:/run/academy/pve-ca.pem:ro
+    - ./academy:/app/academy:ro
+    - ./frontend:/app/frontend:ro
+    - ./catalogue.json:/app/catalogue.json:ro
+    - ./content:/var/lib/academy/content
+  networks: [services, management]
+  read_only: true
+  tmpfs: [/tmp]
+  security_opt: [no-new-privileges:true]
+  cap_drop: [ALL]
+services:
+  database:
+    image: postgres:17-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: academy
+      POSTGRES_USER: academy
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Run install-services.sh first}
+    volumes: ["database:/var/lib/postgresql/data"]
+    networks: [services]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U academy -d academy"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    security_opt: [no-new-privileges:true]
+  api:
+    <<: *academy
+    depends_on:
+      database: {condition: service_healthy}
+      guacamole: {condition: service_started}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health',timeout=3)"]
+      start_period: 180s
+      interval: 10s
+      timeout: 5s
+      retries: 30
+  worker:
+    <<: *academy
+    command: ["python", "-m", "academy.worker"]
+    depends_on:
+      api: {condition: service_healthy}
+  guacd:
+    image: guacamole/guacd:1.6.0
+    restart: unless-stopped
+    networks: [services, console]
+    security_opt: [no-new-privileges:true]
+  guacamole:
+    image: guacamole/guacamole:1.6.0
+    restart: unless-stopped
+    environment:
+      GUACD_HOSTNAME: guacd
+      JSON_ENABLED: "true"
+      JSON_SECRET_KEY: ${GUAC_JSON_KEY:?Run install-services.sh first}
+    networks: [services]
+    depends_on: [guacd]
+    security_opt: [no-new-privileges:true]
+  web:
+    image: nginx:1.28-alpine
+    restart: unless-stopped
+    ports: ["443:443"]
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./secrets/web.crt:/etc/nginx/tls/web.crt:ro
+      - ./secrets/web.key:/etc/nginx/tls/web.key:ro
+    depends_on:
+      api: {condition: service_healthy}
+    networks: [services, web]
+    security_opt: [no-new-privileges:true]
+networks:
+  services: {internal: true}
+  web: {}
+  console: {}
+  management: {}
+volumes:
+  database: {}

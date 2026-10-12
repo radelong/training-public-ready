@@ -1,0 +1,14 @@
+# Corrected Service for k8s-05: the selector now matches the pod labels.
+apiVersion: v1
+kind: Service
+metadata:
+  name: shop
+  namespace: netlab
+spec:
+  type: ClusterIP
+  selector:
+    app: shop
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80

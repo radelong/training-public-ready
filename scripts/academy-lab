@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Installed inside each learner template. Invoked by the trusted QEMU agent.
+set -euo pipefail
+kind="$(cat /etc/academy-lab-kind)"
+action="${1:-}"; drill="${2:-}"
+case "$action" in
+  ready)
+    # Cloud-init may continue optional final tasks after it installs the
+    # learner's SSH key. The key is the required launch dependency.
+    test -s /home/learner/.ssh/authorized_keys
+    test -f /var/lib/academy-template-ready
+    systemctl is-active --quiet ssh
+    if [ "$kind" = linux ]; then docker image inspect academy-linux:1.0.0 >/dev/null; fi
+    if [ "$kind" = netlab ]; then
+      test -f /var/lib/academy-k3s-ready
+      /usr/local/bin/k3s kubectl get nodes --no-headers | grep -q ' Ready '
+    fi
+    printf 'ready\n'; exit 0;;
+  start|check|hint|solution) :;;
+  *) printf 'Unsupported action\n' >&2; exit 2;;
+esac
+if [ "$kind" = linux ]; then
+  exec /usr/local/sbin/academy-linux "$action" "$drill"
+fi
+if [[ "$kind" = netlab && "$drill" =~ ^(net|fw|k8s)-[a-z0-9-]+$ ]]; then
+  test -f "/opt/netlab/drills/$drill.sh"
+  export NO_COLOR=1
+  exec /opt/netlab/bin/netlab "$action" "$drill"
+fi
+printf 'Drill is not available in this VM\n' >&2; exit 2

@@ -1,0 +1,15 @@
+[Unit]
+Description=Prepare offline Kubernetes training cluster on first learner boot
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/var/lib/academy-template-ready
+ConditionPathExists=!/var/lib/academy-k3s-ready
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/academy-k3s-firstboot
+TimeoutStartSec=3600
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

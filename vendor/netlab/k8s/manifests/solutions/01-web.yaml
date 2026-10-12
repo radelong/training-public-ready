@@ -1,0 +1,35 @@
+# One valid answer to k8s-01. Apply with:
+#   kubectl apply -f /opt/netlab/k8s/manifests/solutions/01-web.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: netlab
+  labels: { app: web }
+spec:
+  replicas: 3
+  selector:
+    matchLabels: { app: web }
+  template:
+    metadata:
+      labels: { app: web }
+    spec:
+      containers:
+        - name: web
+          image: nginx:1.27-alpine
+          ports: [{ containerPort: 80, name: http }]
+          resources:
+            requests: { cpu: "10m", memory: "16Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: netlab
+spec:
+  type: ClusterIP
+  selector: { app: web }
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

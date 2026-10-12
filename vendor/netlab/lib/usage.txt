@@ -1,0 +1,55 @@
+
+netlab -- a break/fix lab for Linux networking, iptables and Kubernetes
+
+  Almost every command needs root. Prefix with sudo.
+
+LAB CONTROL
+  netlab lab up                 Build the 3-namespace network topology
+  netlab lab down               Remove it (host networking untouched)
+  netlab lab rebuild            Tear down and rebuild from scratch
+  netlab lab map                Print the topology diagram
+  netlab status                 Health of the lab + cluster + active drill
+  netlab doctor                 Check prerequisites on this machine
+
+DRILLS  (break/fix exercises)
+  netlab list [net|fw|k8s]      List drills and which you have passed
+  netlab start <id>             Reset the lab, inject one fault, brief you
+  netlab check [id]             Test whether you fixed it
+  netlab hint [id]              A nudge that does not give the answer away
+  netlab solution [id]          Full walkthrough with commands
+  netlab reset [id]             Put the lab back to known-good
+  netlab challenge <module>     Inject a RANDOM undisclosed fault
+  netlab reveal                 Give up: name the fault you were given
+  netlab progress               Scoreboard
+
+WORKING INSIDE THE LAB
+  netlab exec <ns> <cmd...>     Run one command in a namespace
+                                  ns = client | router | server
+  netlab sh <ns>                Interactive shell inside a namespace
+
+KUBERNETES
+  netlab k8s up                 Install k3s and seed the practice namespace
+  netlab k8s status             Cluster / node / workload overview
+  netlab k8s reset              Wipe and re-seed the 'netlab' namespace
+  netlab k8s iptables           Show the rules kube-proxy wrote (great demo)
+  netlab k8s down               Uninstall k3s
+
+READING
+  netlab guide                  List the guides shipped with this package
+  netlab guide 04               Open guide 04 in a pager
+
+SAFETY (for when you experiment on the REAL host firewall)
+  netlab snapshot save [name]   Save host iptables + addresses + routes
+  netlab snapshot restore <n>   Put the saved iptables ruleset back
+  netlab snapshot list
+  netlab deadman [minutes]      Auto-restore host iptables in N minutes
+  netlab deadman-cancel         Disarm it once you are confident
+
+SUGGESTED PATH
+  1. netlab guide 00            Read the orientation guide
+  2. sudo netlab lab up
+  3. sudo netlab start net-01-link-down     ... work through the net-* drills
+  4. ... then the fw-* drills
+  5. sudo netlab k8s up         ... then the k8s-* drills
+  6. sudo netlab challenge net  ... prove it stuck
+

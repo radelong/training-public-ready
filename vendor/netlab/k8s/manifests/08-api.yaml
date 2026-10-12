@@ -1,0 +1,40 @@
+# Starting point for the rollout / rollback drill. This version is GOOD.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: netlab
+  labels: { app: api }
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels: { app: api }
+  template:
+    metadata:
+      labels: { app: api }
+    spec:
+      containers:
+        - name: web
+          image: nginx:1.27-alpine
+          ports: [{ containerPort: 80 }]
+          readinessProbe:
+            httpGet: { path: /, port: 80 }
+            initialDelaySeconds: 2
+            periodSeconds: 3
+          resources:
+            requests: { cpu: "10m", memory: "16Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  namespace: netlab
+spec:
+  selector: { app: api }
+  ports: [{ port: 80, targetPort: 80 }]

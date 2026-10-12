@@ -1,0 +1,21 @@
+# BROKEN ON PURPOSE: the image tag does not exist.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: imgtest
+  namespace: netlab
+  labels: { app: imgtest }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: imgtest }
+  template:
+    metadata:
+      labels: { app: imgtest }
+    spec:
+      containers:
+        - name: web
+          image: nginx:1.27-alpin
+          ports: [{ containerPort: 80 }]
+          resources:
+            requests: { cpu: "10m", memory: "16Mi" }

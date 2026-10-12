@@ -1,0 +1,275 @@
+[
+  {
+    "id": "netlab",
+    "title": "Kubernetes Networking Lab (Netlab)",
+    "kind": "netlab",
+    "enabled": false,
+    "description": "Practice networking, firewall, and Kubernetes troubleshooting in an isolated Ubuntu VM with locally installed K3s and exercise images.",
+    "cores": 2,
+    "memory": 4096,
+    "drills": [
+      {
+        "id": "net-01-link-down",
+        "title": "Client interface is administratively down",
+        "brief": "A user reports the client has no network at all. It cannot reach\nthe gateway, the server, or anything else.",
+        "goal": "Bring the client back online so it can reach 10.10.2.10 and fetch\nhttp://10.10.2.10:8080/health.",
+        "tools": "ip link, ip -br addr",
+        "time": "5 min",
+        "level": "1"
+      },
+      {
+        "id": "net-02-no-default-route",
+        "title": "Default route is missing",
+        "brief": "The client can ping its own gateway 10.10.1.1 but cannot reach\nanything beyond its own subnet. Attempts fail instantly, not after a timeout.",
+        "goal": "Restore reachability from the client to 10.10.2.10.",
+        "tools": "ip route, ip route get",
+        "time": "5 min",
+        "level": "1"
+      },
+      {
+        "id": "net-03-wrong-netmask",
+        "title": "Wrong prefix length puts the gateway off-subnet",
+        "brief": "Someone edited the client network config by hand. Now the client\ncannot even reach its own gateway, and adding a default route fails with\nRTNETLINK answers: Network is unreachable.",
+        "goal": "Fix the client addressing so it can reach 10.10.1.1 and 10.10.2.10.",
+        "tools": "ip addr, ipcalc, ip route",
+        "time": "10 min",
+        "level": "1"
+      },
+      {
+        "id": "net-04-forwarding-off",
+        "title": "Router is not forwarding packets",
+        "brief": "After a reboot the client can ping the router (10.10.1.1) and the\nserver can ping the router (10.10.2.1), but the client cannot reach the server.\nBoth hosts have correct addresses and default routes. Nothing is firewalled.",
+        "goal": "Make the client able to reach 10.10.2.10 again.",
+        "tools": "sysctl, tcpdump, ip route",
+        "time": "10 min",
+        "level": "1"
+      },
+      {
+        "id": "net-05-bogus-arp",
+        "title": "Stale static ARP entry poisons the gateway",
+        "brief": "The client has a correct address, a correct default route, and the\nrouter is healthy and forwarding. Yet every ping to the gateway times out.\nPackets are clearly leaving the client -- they just never get an answer.",
+        "goal": "Restore reachability from the client to 10.10.1.1 and 10.10.2.10.",
+        "tools": "ip neigh, arping, tcpdump",
+        "time": "10 min",
+        "level": "1"
+      },
+      {
+        "id": "net-06-name-resolution",
+        "title": "Name resolves to the wrong address",
+        "brief": "An application that talks to http://web.lab.local:8080/ started\ntiming out this morning. Using the IP address 10.10.2.10 directly works fine.\nNothing about the network path has changed.",
+        "goal": "Make web.lab.local resolve to 10.10.2.10 again from the client, and\nmake http://web.lab.local:8080/health succeed.",
+        "tools": "getent, resolvectl, /etc/hosts, /etc/nsswitch.conf",
+        "time": "10 min",
+        "level": "1"
+      },
+      {
+        "id": "net-07-nat-missing",
+        "title": "Lab hosts cannot reach a simulated WAN (missing MASQUERADE)",
+        "brief": "Everything inside the lab still works: client to router, client to\nserver, HTTP between them. A separate local network namespace stands in for\nan external WAN. The lab client cannot reach its test address because source\nNAT is missing on the VM. No internet connection is required.",
+        "goal": "Restore outbound reachability to the simulated WAN by putting\nsource NAT on the VM. Verify with: netlab exec client ping -c2 198.51.100.1",
+        "tools": "iptables -t nat, conntrack, tcpdump",
+        "time": "15 min",
+        "level": "1"
+      },
+      {
+        "id": "net-08-blackhole-route",
+        "title": "A more-specific route swallows the traffic",
+        "brief": "The client has a valid address and a valid default route via\n10.10.1.1. It can reach the gateway. But traffic to the 10.10.2.0/24 network\nfails instantly, and tcpdump on the router sees nothing at all arrive.",
+        "goal": "Restore reachability from the client to 10.10.2.10 without removing\nthe default route.",
+        "tools": "ip route get, ip route show, tcpdump",
+        "time": "10 min",
+        "level": "1"
+      },
+      {
+        "id": "net-09-mtu-blackhole",
+        "title": "MTU mismatch: small requests work, large transfers hang",
+        "brief": "Ping works. Small HTTP requests work instantly. But downloading a\nlarge file from the server hangs after the first few kilobytes and eventually\ntimes out. SSH connects, then freezes the moment output gets long. Classic.",
+        "goal": "Make this complete within a few seconds:\n  netlab exec client curl -s -o /dev/null http://10.10.2.10:8080/big.bin",
+        "tools": "ping -M do -s, ip link mtu, tcpdump, tracepath",
+        "time": "20 min",
+        "level": "1"
+      },
+      {
+        "id": "net-10-wrong-gateway",
+        "title": "Default route points at a gateway that does not exist",
+        "brief": "The client has an address and a default route, and its interface is\nup. Pings to anything off-subnet fail with Host is unreachable rather than the\nNetwork is unreachable you would get with no route at all.",
+        "goal": "Restore reachability from the client to 10.10.2.10.",
+        "tools": "ip route get, ip neigh, ping",
+        "time": "10 min",
+        "level": "1"
+      },
+      {
+        "id": "fw-01-no-conntrack",
+        "title": "Default-deny INPUT with no rule for return traffic",
+        "brief": "Someone hardened the client with a default-deny INPUT policy. Now\nNOTHING works from the client -- not ping, not HTTP, not DNS. Yet tcpdump on the\nserver proves the requests arrive there and the replies are sent back.",
+        "goal": "Make http://10.10.2.10:8080/health work from the client again WITHOUT\nweakening the policy. The INPUT policy must stay DROP when you are done.",
+        "tools": "iptables -L -v, conntrack, tcpdump",
+        "time": "15 min",
+        "level": "1"
+      },
+      {
+        "id": "fw-02-forward-drop",
+        "title": "Router drops forwarded traffic",
+        "brief": "The client can ping the router. The router can ping the server. IP\nforwarding is enabled and the routes are correct. But the client cannot reach\nthe server at all, and the packets vanish inside the router.",
+        "goal": "Restore client to server connectivity while keeping the router\ndefault-deny. The FORWARD policy must still be DROP when you are done.",
+        "tools": "iptables FORWARD chain, packet counters",
+        "time": "15 min",
+        "level": "1"
+      },
+      {
+        "id": "fw-03-port-blocked",
+        "title": "One service port is blocked, everything else is fine",
+        "brief": "The monitoring system says the web server is down. But the host\npings fine, and the same server answers perfectly on port 9090. Only port 8080\nhangs -- it does not refuse, it hangs.",
+        "goal": "Make http://10.10.2.10:8080/health work from the client again.",
+        "tools": "iptables -S, ss -ltnp, curl -v, nc",
+        "time": "10 min",
+        "level": "1"
+      },
+      {
+        "id": "fw-04-rule-order",
+        "title": "The ACCEPT rule exists but never fires",
+        "brief": "A colleague swears they added an ACCEPT rule for port 8080 on the\nserver, and you can see it in the ruleset. The client still cannot connect.\nThe colleague is now blaming the network.",
+        "goal": "Get http://10.10.2.10:8080/health working from the client, while\nleaving the server otherwise protected from the LAN.",
+        "tools": "iptables --line-numbers, -v counters, -I vs -A",
+        "time": "15 min",
+        "level": "1"
+      },
+      {
+        "id": "fw-05-output-drop",
+        "title": "Egress filtering blocks one destination",
+        "brief": "The client cannot reach the server. tcpdump on the CLIENT interface\nshows no packets leaving at all, and ping reports an odd error rather than a\nplain timeout. The server and router are both perfectly healthy.",
+        "goal": "Restore client access to 10.10.2.10 (ping and HTTP).",
+        "tools": "iptables OUTPUT chain, tcpdump, ping error text",
+        "time": "15 min",
+        "level": "1"
+      },
+      {
+        "id": "fw-06-dnat-broken",
+        "title": "Port forward sends traffic to the wrong place",
+        "brief": "The router is supposed to publish the DMZ web server on its own LAN\naddress: clients hit http://10.10.1.1:8080/ and the router forwards them to\n10.10.2.10:8080. Someone set up the DNAT rule, but connections just hang.\nGoing directly to http://10.10.2.10:8080/ still works fine.",
+        "goal": "Make this work from the client:\n  netlab exec client curl -s http://10.10.1.1:8080/health",
+        "tools": "iptables -t nat, conntrack, tcpdump",
+        "time": "20 min",
+        "level": "1"
+      },
+      {
+        "id": "fw-07-icmp-blocked",
+        "title": "Ping fails but the service is perfectly healthy",
+        "brief": "Monitoring has paged you: the server is unreachable, ping gets 100%\nloss. Users, however, are not complaining, and the web application is serving\ntraffic normally. Someone hardened the server overnight.",
+        "goal": "Make the server answer ping again, without breaking HTTP.",
+        "tools": "iptables icmp matches, curl, ss",
+        "time": "10 min",
+        "level": "1"
+      },
+      {
+        "id": "fw-08-custom-chain",
+        "title": "The rule is hidden in a custom chain",
+        "brief": "The client cannot reach the web server through the router. The\nrouter FORWARD chain looks completely innocent -- policy ACCEPT, and no DROP\nrules anywhere in it. Yet the packets never make it to the DMZ.",
+        "goal": "Restore http://10.10.2.10:8080/health from the client without\ndeleting the LABSEC chain or its jump -- fix only what is wrong inside it.",
+        "tools": "iptables -S, custom chains, jump targets",
+        "time": "20 min",
+        "level": "1"
+      },
+      {
+        "id": "k8s-01-first-deployment",
+        "title": "Build your first Deployment and Service",
+        "brief": "Nothing is broken. This is the build exercise: you are going to\ncreate a Deployment and put a Service in front of it, by hand, and watch what\nKubernetes does with each object.",
+        "goal": "In the 'netlab' namespace, create:\n  - a Deployment named 'web' running image nginx:1.27-alpine, 3 replicas,\n    with pod label app=web\n  - a ClusterIP Service named 'web' on port 80 targeting the pods\nSuccess = 3 ready replicas, the Service has endpoints, and the toolbox pod\ncan fetch http://web from inside the cluster.",
+        "tools": "kubectl create/apply/get/describe/scale",
+        "time": "20 min",
+        "level": "1"
+      },
+      {
+        "id": "k8s-02-crashloop",
+        "title": "CrashLoopBackOff",
+        "brief": "A Deployment named 'crashy' was rolled out and the pod keeps\nrestarting. kubectl get pods shows CrashLoopBackOff and a restart count that\nclimbs every minute.",
+        "goal": "Get the 'crashy' Deployment to 1 ready replica that stays running.\nThe container must keep running rather than exiting.",
+        "tools": "kubectl describe, logs, logs --previous",
+        "time": "15 min",
+        "level": "1"
+      },
+      {
+        "id": "k8s-03-imagepullbackoff",
+        "title": "ImagePullBackOff",
+        "brief": "A Deployment named 'imgtest' will not start. The pod sits at\nErrImagePull, then ImagePullBackOff, and never produces any application logs\nat all.",
+        "goal": "Get 'imgtest' to 1 ready replica running a real nginx image.",
+        "tools": "kubectl describe, events, set image",
+        "time": "10 min",
+        "level": "1"
+      },
+      {
+        "id": "k8s-04-pending-pod",
+        "title": "Pod stuck in Pending -- unschedulable",
+        "brief": "The 'bigapp' Deployment was applied ten minutes ago. Its pod is\nstill Pending. It has never been assigned to a node, there are no container\nlogs, and describing the pod shows a FailedScheduling event.",
+        "goal": "Get 'bigapp' to 1 ready replica by making its resource requests\nsomething this node can actually satisfy.",
+        "tools": "kubectl describe, get events, describe node",
+        "time": "15 min",
+        "level": "1"
+      },
+      {
+        "id": "k8s-05-service-selector",
+        "title": "Service has no endpoints (selector mismatch)",
+        "brief": "The 'shop' Deployment is healthy: 2/2 pods Running and Ready. The\n'shop' Service exists and has a ClusterIP. But every request to http://shop\nfrom inside the cluster hangs or is refused.",
+        "goal": "Make http://shop reachable from the toolbox pod. Do not delete the\nDeployment -- fix the wiring.",
+        "tools": "kubectl get endpointslices, describe svc, --show-labels",
+        "time": "15 min",
+        "level": "1"
+      },
+      {
+        "id": "k8s-06-readiness-probe",
+        "title": "Pods Running but never Ready (bad readiness probe)",
+        "brief": "The 'probeapp' pods show STATUS Running but READY 0/2. The\nDeployment never reports itself available, the rollout hangs, and the Service\nhas no endpoints. The container itself is not restarting.",
+        "goal": "Get 'probeapp' to 2 ready replicas with a working readiness probe,\nand http://probeapp reachable from the toolbox pod. Keep a readiness probe --\ndo not just delete it.",
+        "tools": "kubectl describe pod, probes, port-forward",
+        "time": "15 min",
+        "level": "1"
+      },
+      {
+        "id": "k8s-07-configmap-secret",
+        "title": "Missing ConfigMap and Secret",
+        "brief": "The 'cfgapp' Deployment is stuck. The pod never reaches Running --\nit sits in ContainerCreating or CreateContainerConfigError. There are no\napplication logs because the container was never created.",
+        "goal": "Create the configuration the Deployment expects so the pod runs:\n  - a ConfigMap named 'app-config' with key GREETING = hello-netlab\n  - a Secret named 'app-secret' with key token = example-only-token\nSuccess = pod Running, GREETING visible in its environment, and the ConfigMap\nmounted at /etc/appconfig.",
+        "tools": "kubectl create configmap/secret, describe pod, exec",
+        "time": "20 min",
+        "level": "1"
+      },
+      {
+        "id": "k8s-08-rollout-rollback",
+        "title": "A bad deploy is stuck mid-rollout -- roll it back",
+        "brief": "Someone pushed a new image tag to the 'api' Deployment ten minutes\nago. The rollout never finished. The old pods are still serving traffic (good),\nbut a new pod is stuck failing to start and the deploy is frozen. Your job is\nto get back to a known-good state fast, the way you would during an incident.",
+        "goal": "Return 'api' to 2 ready replicas running the previous, working\nnginx:1.27-alpine image.",
+        "tools": "kubectl rollout status/history/undo, get rs",
+        "time": "20 min",
+        "level": "1"
+      },
+      {
+        "id": "k8s-09-networkpolicy",
+        "title": "NetworkPolicy is blocking legitimate traffic",
+        "brief": "The 'secure' Deployment is healthy: 2/2 Ready, and its Service has\nendpoints. DNS resolves. Yet the toolbox pod cannot reach http://secure at all\n-- the connection just hangs. A security change went in yesterday.",
+        "goal": "Let the toolbox pod (label role=toolbox) reach the 'secure' pods on\nport 80, while KEEPING the default-deny policy in place. Deleting the\ndefault-deny is not the answer -- add a targeted allow.",
+        "tools": "kubectl get netpol, describe netpol, exec wget",
+        "time": "25 min",
+        "level": "1"
+      },
+      {
+        "id": "k8s-10-nodeport-iptables",
+        "title": "Expose a Deployment on a NodePort and trace it into iptables",
+        "brief": "This drill joins the two halves of the course. The 'edge'\nDeployment is running but has no Service. You will publish it on a fixed\nNodePort, reach it from the VM itself, and then find the exact iptables rules\nkube-proxy wrote to make that work.",
+        "goal": "Create a Service named 'edge' of type NodePort, port 80, nodePort\n30080, selecting the edge pods. Success = curl http://127.0.0.1:30080/ from the\nVM returns the nginx page.",
+        "tools": "kubectl expose, iptables -t nat, conntrack",
+        "time": "25 min",
+        "level": "1"
+      }
+    ]
+  },
+  {
+    "id": "linux",
+    "title": "Linux Lab",
+    "kind": "linux",
+    "enabled": false,
+    "description": "Reserved for the Linux training environment you will provide. Activate it after the offline template is installed and validated.",
+    "cores": 2,
+    "memory": 2048,
+    "drills": []
+  }
+]

@@ -1,0 +1,11 @@
+[
+  {
+    "id": "practice-01",
+    "title": "Inspect the practice environment",
+    "brief": "Inspect the environment supplied with your lab template.",
+    "goal": "Complete the task described in your approved lesson materials.",
+    "tools": "Tools included in the lab VM",
+    "time": "15 min",
+    "level": "1"
+  }
+]

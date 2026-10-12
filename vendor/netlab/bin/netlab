@@ -1,0 +1,498 @@
+#!/usr/bin/env bash
+# netlab -- Ubuntu networking / iptables / Kubernetes practice lab
+# Usage: netlab <command> [args]   (most commands need sudo)
+set -uo pipefail
+
+NETLAB_ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+export NETLAB_ROOT
+
+# shellcheck source=/dev/null
+. "$NETLAB_ROOT/lib/common.sh"
+# shellcheck source=/dev/null
+. "$NETLAB_ROOT/lib/topology.sh"
+# shellcheck source=/dev/null
+. "$NETLAB_ROOT/lib/k8s.sh"
+
+VERSION="$(cat "$NETLAB_ROOT/VERSION" 2>/dev/null || echo dev)"
+
+# ------------------------------------------------------------------ drills --
+drill_file() { printf '%s/drills/%s.sh\n' "$NETLAB_ROOT" "$1"; }
+
+# Drill IDs in teaching order: networking, then firewall, then Kubernetes.
+drill_ids() {
+  local f id
+  for f in "$NETLAB_ROOT"/drills/*.sh; do
+    [ -e "$f" ] || continue
+    id="$(basename "$f" .sh)"
+    case "$id" in
+      net-*) printf '1 %s\n' "$id" ;;
+      fw-*)  printf '2 %s\n' "$id" ;;
+      k8s-*) printf '3 %s\n' "$id" ;;
+      *)     printf '4 %s\n' "$id" ;;
+    esac
+  done | sort | awk '{print $2}'
+}
+
+# Load a drill into the current shell. Resets the DRILL_* vars first so that
+# a drill omitting one does not inherit the previous drill's value.
+load_drill() {
+  local id="$1" f
+  f="$(drill_file "$id")"
+  [ -f "$f" ] || die "No such drill: $id   (try: netlab list)"
+  DRILL_ID="$id"; DRILL_TITLE=""; DRILL_MODULE=""; DRILL_LEVEL="1"
+  DRILL_TIME=""; DRILL_BRIEF=""; DRILL_GOAL=""; DRILL_TOOLS=""
+  unset -f drill_break drill_verify drill_hint drill_solution drill_reset drill_debrief 2>/dev/null
+  drill_break()    { :; }
+  drill_verify()   { return 1; }
+  drill_hint()     { echo "No hint for this drill."; }
+  drill_solution() { echo "No solution recorded for this drill."; }
+  drill_reset()    { topo_repair; }
+  drill_debrief()  { :; }
+  # shellcheck source=/dev/null
+  . "$f"
+}
+
+# Resolve which drill a command should act on: explicit arg, else the active one.
+resolve_id() {
+  local id="${1:-}"
+  if [ -z "$id" ]; then
+    id="$(active_get)"
+    [ -z "$id" ] && die "No active drill. Start one with:  sudo netlab start <id>"
+  fi
+  printf '%s\n' "$id"
+}
+
+module_of() { case "$1" in net-*) echo net;; fw-*) echo fw;; k8s-*) echo k8s;; *) echo other;; esac; }
+
+# --------------------------------------------------------------- cmd: list --
+cmd_list() {
+  local filter="${1:-}" id mark state
+  title "netlab drills"
+  printf '  %-26s %-5s %-6s %s\n' "ID" "LVL" "STATE" "TITLE"
+  printf '  %-26s %-5s %-6s %s\n' "--------------------------" "-----" "------" "-----------------------------"
+  for id in $(drill_ids); do
+    [ -n "$filter" ] && [ "$(module_of "$id")" != "$filter" ] && continue
+    ( load_drill "$id"
+      state="$(progress_get "$id")"
+      if [ "$state" = "passed" ]; then mark="${C_GREEN}done${C_RESET}"; else mark="${C_DIM}--${C_RESET}  "; fi
+      printf '  %-26s %-5s %b %s\n' "$id" "L$DRILL_LEVEL" "$mark" "$DRILL_TITLE"
+    )
+  done
+  printf '\n  Start one:  %ssudo netlab start net-01-link-down%s\n' "$C_GREEN" "$C_RESET"
+  printf '  Or random:  %ssudo netlab challenge net%s\n\n' "$C_GREEN" "$C_RESET"
+}
+
+# -------------------------------------------------------------- cmd: start --
+cmd_start() {
+  need_root "start"
+  local id="${1:?usage: netlab start <drill-id>}"
+  load_drill "$id"
+  ensure_dirs
+
+  if [ "$DRILL_MODULE" = "k8s" ]; then
+    k8s_require
+  else
+    topo_is_up || { info "Topology not up yet -- building it now."; topo_up; }
+  fi
+
+  info "Resetting environment to known-good state..."
+  drill_reset >/dev/null 2>&1
+  info "Injecting fault..."
+  drill_break
+  active_set "$id"
+  rm -f "$CHALLENGE_FILE"
+  progress_set "$id" "started"
+  log "start $id"
+
+  title "$DRILL_ID -- $DRILL_TITLE"
+  printf '  %sLevel%s     %s\n' "$C_BOLD" "$C_RESET" "$DRILL_LEVEL"
+  [ -n "$DRILL_TIME" ]  && printf '  %sBudget%s    %s\n' "$C_BOLD" "$C_RESET" "$DRILL_TIME"
+  [ -n "$DRILL_TOOLS" ] && printf '  %sTools%s     %s\n' "$C_BOLD" "$C_RESET" "$DRILL_TOOLS"
+  printf '\n  %sSYMPTOM%s\n' "$C_BOLD$C_YELLOW" "$C_RESET"
+  printf '%s\n' "$DRILL_BRIEF" | sed 's/^/    /'
+  printf '\n  %sYOUR GOAL%s\n' "$C_BOLD$C_GREEN" "$C_RESET"
+  printf '%s\n' "$DRILL_GOAL" | sed 's/^/    /'
+  printf '\n'
+  hr
+  printf '  netlab check       test whether you fixed it\n'
+  printf '  netlab hint        a nudge (does not spoil the answer)\n'
+  printf '  netlab solution    full walkthrough\n'
+  printf '  netlab reset       undo everything, put the fault back\n\n'
+}
+
+# ---------------------------------------------------------- cmd: challenge --
+cmd_challenge() {
+  need_root "challenge"
+  local mod="${1:-net}" pool=() id
+  for id in $(drill_ids); do
+    [ "$(module_of "$id")" = "$mod" ] && pool+=("$id")
+  done
+  [ "${#pool[@]}" -eq 0 ] && die "No drills in module '$mod'. Modules: net, fw, k8s"
+  id="${pool[$((RANDOM % ${#pool[@]}))]}"
+
+  load_drill "$id"
+  if [ "$DRILL_MODULE" = "k8s" ]; then k8s_require; else topo_is_up || topo_up; fi
+  drill_reset >/dev/null 2>&1
+  drill_break
+  active_set "$id"
+  touch "$CHALLENGE_FILE"
+  log "challenge $id"
+
+  title "CHALLENGE MODE -- module: $mod"
+  printf '  A fault has been injected somewhere in the %s lab.\n' "$mod"
+  printf '  You are not being told what it is. Find it and fix it.\n\n'
+  printf '  %sStart here:%s\n' "$C_BOLD" "$C_RESET"
+  if [ "$mod" = "k8s" ]; then
+    printf '    kubectl -n %s get all\n' "$K8S_NS"
+    printf '    kubectl -n %s get events --sort-by=.lastTimestamp | tail -20\n\n' "$K8S_NS"
+  else
+    printf '    sudo netlab exec client ping -c2 10.10.2.10\n'
+    printf '    sudo netlab exec client curl -s --max-time 4 http://10.10.2.10:8080/health\n\n'
+  fi
+  printf '  %snetlab check%s when you think it is fixed.\n' "$C_GREEN" "$C_RESET"
+  printf '  %snetlab reveal%s if you give up.\n\n' "$C_YELLOW" "$C_RESET"
+}
+
+cmd_reveal() {
+  local id; id="$(resolve_id "${1:-}")" || exit 1
+  load_drill "$id"
+  rm -f "$CHALLENGE_FILE"
+  title "Revealed: $DRILL_ID -- $DRILL_TITLE"
+  printf '%s\n\n' "$DRILL_BRIEF" | sed 's/^/  /'
+}
+
+# -------------------------------------------------------------- cmd: check --
+cmd_check() {
+  need_root "check"
+  local id; id="$(resolve_id "${1:-}")" || exit 1
+  load_drill "$id"
+  printf '\n'
+  info "Running verification for $id ..."
+  if drill_verify; then
+    progress_set "$id" "passed"
+    log "pass $id"
+    printf '\n  %s================ PASS ================%s\n\n' "$C_BOLD$C_GREEN" "$C_RESET"
+    printf '  %s%s%s\n\n' "$C_BOLD" "$DRILL_TITLE" "$C_RESET"
+    local db; db="$(drill_debrief 2>/dev/null)"
+    if [ -n "$db" ]; then
+      printf '  %sWHY THAT WORKED%s\n' "$C_BOLD$C_CYAN" "$C_RESET"
+      printf '%s\n\n' "$db" | sed 's/^/    /'
+    fi
+    active_clear
+    cmd_next_hint "$id"
+    return 0
+  else
+    printf '\n  %s---------------- NOT YET ----------------%s\n\n' "$C_BOLD$C_RED" "$C_RESET"
+    printf '  The check still fails. Keep digging.\n'
+    is_challenge && printf '  (challenge mode: use %snetlab reveal%s to see what was broken)\n' "$C_YELLOW" "$C_RESET"
+    printf '  %snetlab hint%s for a nudge.\n\n' "$C_YELLOW" "$C_RESET"
+    return 1
+  fi
+}
+
+cmd_next_hint() {
+  local cur="$1" seen=0 id
+  for id in $(drill_ids); do
+    if [ "$seen" = "1" ] && [ "$(progress_get "$id")" != "passed" ]; then
+      printf '  Next up: %ssudo netlab start %s%s\n\n' "$C_GREEN" "$id" "$C_RESET"
+      return
+    fi
+    [ "$id" = "$cur" ] && seen=1
+  done
+  printf '  That was the last drill in the list. %snetlab progress%s to see how you did.\n\n' "$C_GREEN" "$C_RESET"
+}
+
+# ------------------------------------------------------- hint / solution ----
+cmd_hint() {
+  local id; id="$(resolve_id "${1:-}")" || exit 1
+  load_drill "$id"
+  title "Hint -- $DRILL_ID"
+  drill_hint | sed 's/^/  /'
+  printf '\n'
+}
+
+cmd_solution() {
+  local id; id="$(resolve_id "${1:-}")" || exit 1
+  load_drill "$id"
+  rm -f "$CHALLENGE_FILE"
+  title "Solution -- $DRILL_ID: $DRILL_TITLE"
+  drill_solution | sed 's/^/  /'
+  printf '\n'
+}
+
+cmd_reset() {
+  need_root "reset"
+  local id="${1:-$(active_get)}"
+  if [ -z "$id" ]; then
+    info "No active drill -- restoring the whole lab to known-good."
+    require_topo
+    topo_repair
+    ok "Lab restored."
+    return
+  fi
+  load_drill "$id"
+  info "Restoring known-good state for $id ..."
+  drill_reset
+  ok "Reset done. Re-inject the fault with: sudo netlab start $id"
+  active_clear
+}
+
+# ------------------------------------------------------------- cmd: status --
+cmd_status() {
+  title "netlab status  (v$VERSION)"
+  if topo_is_up; then
+    ok "Network lab: UP"
+    printf '\n  %-12s %-18s %s\n' "NAMESPACE" "ADDRESSES" "DEFAULT ROUTE"
+    local ns short
+    for ns in "${NETLAB_NAMESPACES[@]}"; do
+      short="${ns#nl-}"
+      local addrs gw
+      addrs="$(ip netns exec "$ns" ip -4 -br addr show 2>/dev/null | awk '$1!="lo"{printf "%s ", $3}')"
+      gw="$(ip netns exec "$ns" ip -4 route show default 2>/dev/null | awk '{print $3; exit}')"
+      printf '  %-12s %-18s %s\n' "$short" "${addrs:-none}" "${gw:-none}"
+    done
+    printf '\n  Reachability from client:\n'
+    _probe "gateway 10.10.1.1"        t_ping client "$ROUTER_LAN_IP"
+    _probe "server  10.10.2.10"       t_ping client "$SERVER_IP"
+    _probe "http    10.10.2.10:8080"  t_http client "http://$SERVER_IP:$HTTP_PORT/health"
+    _probe "dns     web.lab.local"    t_resolves_to client web.lab.local "$SERVER_IP"
+  else
+    warn "Network lab: DOWN   (start it: sudo netlab lab up)"
+  fi
+
+  printf '\n'
+  if k8s_available; then
+    ok "Kubernetes: $(k8s_flavor) reachable"
+    kubectl get nodes -o wide 2>/dev/null | sed 's/^/  /'
+  else
+    warn "Kubernetes: not installed or not reachable   (sudo netlab k8s up)"
+  fi
+
+  local a; a="$(active_get)"
+  printf '\n'
+  if [ -n "$a" ]; then
+    if is_challenge; then
+      printf '  %sActive: CHALLENGE in progress%s (netlab check / netlab reveal)\n\n' "$C_YELLOW" "$C_RESET"
+    else
+      printf '  %sActive drill:%s %s\n\n' "$C_BOLD" "$C_RESET" "$a"
+    fi
+  else
+    printf '  No active drill.\n\n'
+  fi
+}
+
+_probe() {
+  local label="$1"; shift
+  if "$@"; then
+    printf '    %s[ok]%s   %s\n' "$C_GREEN" "$C_RESET" "$label"
+  else
+    printf '    %s[fail]%s %s\n' "$C_RED" "$C_RESET" "$label"
+  fi
+}
+
+cmd_progress() {
+  local total=0 done=0 id
+  title "Progress"
+  for id in $(drill_ids); do
+    total=$((total+1))
+    [ "$(progress_get "$id")" = "passed" ] && done=$((done+1))
+  done
+  printf '  %s/%s drills passed\n\n' "$done" "$total"
+  local mod
+  for mod in net fw k8s; do
+    local t=0 d=0
+    for id in $(drill_ids); do
+      [ "$(module_of "$id")" = "$mod" ] || continue
+      t=$((t+1)); [ "$(progress_get "$id")" = "passed" ] && d=$((d+1))
+    done
+    [ "$t" -gt 0 ] && printf '  %-5s %2s/%-2s  %s\n' "$mod" "$d" "$t" "$(_bar "$d" "$t")"
+  done
+  printf '\n'
+}
+
+_bar() {
+  local d="$1" t="$2" w=24 i filled
+  filled=$(( t > 0 ? d * w / t : 0 ))
+  printf '['
+  for ((i=0;i<w;i++)); do [ "$i" -lt "$filled" ] && printf '#' || printf '.'; done
+  printf ']'
+}
+
+# --------------------------------------------------------------- cmd: exec --
+cmd_exec() {
+  need_root "exec"
+  local ns="${1:?usage: netlab exec <client|router|server> <command...>}"; shift
+  ns_exists "nl-$ns" || die "Unknown namespace '$ns'. Use: client, router or server."
+  ip netns exec "nl-$ns" "$@"
+}
+
+cmd_sh() {
+  need_root "sh"
+  local ns="${1:-client}"
+  ns_exists "nl-$ns" || die "Unknown namespace '$ns'. Use: client, router or server."
+  info "Entering nl-$ns. Type 'exit' to come back."
+  ip netns exec "nl-$ns" env PS1="[netlab:$ns] \\w # " bash --norc
+}
+
+# -------------------------------------------------------------- cmd: guide --
+cmd_guide() {
+  local pick="${1:-}" f
+  if [ -z "$pick" ]; then
+    title "Guides in this package"
+    for f in "$NETLAB_ROOT"/guides/*.md; do
+      [ -e "$f" ] || continue
+      printf '  %-42s %s\n' "$(basename "$f")" "$(head -1 "$f" | sed 's/^# //')"
+    done
+    printf '\n  Read one:  %snetlab guide 04%s   or   %sless %s/guides/*.md%s\n\n' \
+      "$C_GREEN" "$C_RESET" "$C_GREEN" "$NETLAB_ROOT" "$C_RESET"
+    return
+  fi
+  f="$(ls "$NETLAB_ROOT"/guides/ | grep -E "^0*${pick}[-.]|^${pick}" | head -1)"
+  [ -z "$f" ] && die "No guide matching '$pick'. Run 'netlab guide' for the list."
+  if have less; then
+    less -R "$NETLAB_ROOT/guides/$f"
+  else
+    cat "$NETLAB_ROOT/guides/$f"
+  fi
+}
+
+# ------------------------------------------------------------- cmd: doctor --
+cmd_doctor() {
+  title "netlab doctor"
+  local missing=0 b
+  for b in ip iptables ping curl python3 tcpdump ss awk sed; do
+    if have "$b"; then printf '    %s[ok]%s   %s\n' "$C_GREEN" "$C_RESET" "$b"
+    else printf '    %s[MISS]%s %s\n' "$C_RED" "$C_RESET" "$b"; missing=1; fi
+  done
+  printf '\n'
+  [ "$(id -u)" -eq 0 ] && ok "running as root" || warn "not root -- most commands need sudo"
+  if [ -e /proc/sys/net/ipv4/ip_forward ]; then
+    ok "ip_forward = $(cat /proc/sys/net/ipv4/ip_forward)"
+  fi
+  printf '  iptables backend: %s\n' "$(iptables --version 2>/dev/null || echo unknown)"
+  if have ufw; then
+    printf '  ufw: %s\n' "$(ufw status 2>/dev/null | head -1)"
+    ufw status 2>/dev/null | head -1 | grep -q active && \
+      warn "ufw is active. It writes its own iptables chains -- see guides/06."
+  fi
+  printf '\n'
+  if topo_is_up; then ok "topology up"; else warn "topology down (sudo netlab lab up)"; fi
+  if k8s_available; then ok "kubernetes reachable"; else warn "kubernetes unavailable (sudo netlab k8s up)"; fi
+  [ "$missing" = "1" ] && printf '\n  Install what is missing:  %ssudo %s/install.sh --deps-only%s\n' \
+    "$C_GREEN" "$NETLAB_ROOT" "$C_RESET"
+  printf '\n'
+}
+
+# --------------------------------------------------------- cmd: snapshot ----
+SNAP_DIR="$NETLAB_STATE_DIR/snapshots"
+
+cmd_snapshot() {
+  need_root "snapshot"
+  ensure_dirs; mkdir -p "$SNAP_DIR"
+  case "${1:-save}" in
+    save)
+      local name="${2:-$(date +%Y%m%d-%H%M%S)}"
+      iptables-save  > "$SNAP_DIR/$name.v4"  2>/dev/null || true
+      ip6tables-save > "$SNAP_DIR/$name.v6"  2>/dev/null || true
+      ip -4 addr show   > "$SNAP_DIR/$name.addr"  2>/dev/null || true
+      ip -4 route show  > "$SNAP_DIR/$name.route" 2>/dev/null || true
+      ok "Host firewall + network state saved as '$name' in $SNAP_DIR"
+      ;;
+    restore)
+      local name="${2:?usage: netlab snapshot restore <name>}"
+      [ -f "$SNAP_DIR/$name.v4" ] || die "No snapshot '$name'"
+      iptables-restore  < "$SNAP_DIR/$name.v4"
+      [ -f "$SNAP_DIR/$name.v6" ] && ip6tables-restore < "$SNAP_DIR/$name.v6"
+      ok "Host iptables restored from '$name'."
+      warn "Addresses/routes are NOT auto-restored. Reference copies:"
+      printf '    %s/%s.addr  %s/%s.route\n' "$SNAP_DIR" "$name" "$SNAP_DIR" "$name"
+      ;;
+    list)
+      ls -1 "$SNAP_DIR"/*.v4 2>/dev/null | xargs -r -n1 basename | sed 's/\.v4$//' | sed 's/^/  /'
+      ;;
+    *) die "usage: netlab snapshot save|restore|list [name]";;
+  esac
+}
+
+# ------------------------------------------------------- cmd: safety-net ----
+cmd_deadman() {
+  need_root "deadman"
+  local mins="${1:-15}"
+  have systemd-run || die "systemd-run not available on this system."
+  ensure_dirs; mkdir -p "$SNAP_DIR"
+  iptables-save > "$SNAP_DIR/deadman.v4"
+  systemd-run --unit=netlab-deadman --on-active="${mins}min" \
+    /sbin/iptables-restore "$SNAP_DIR/deadman.v4" >/dev/null 2>&1 \
+    || die "Could not schedule the timer."
+  ok "Dead-man switch armed: host iptables will be restored in $mins minutes."
+  printf '  Cancel it once you are happy:  %ssudo netlab deadman-cancel%s\n\n' "$C_GREEN" "$C_RESET"
+}
+
+cmd_deadman_cancel() {
+  need_root "deadman-cancel"
+  systemctl stop netlab-deadman.timer 2>/dev/null
+  systemctl stop netlab-deadman.service 2>/dev/null
+  systemctl reset-failed netlab-deadman.service 2>/dev/null
+  ok "Dead-man switch cancelled."
+}
+
+# ---------------------------------------------------------------- cmd: lab --
+cmd_lab() {
+  case "${1:-}" in
+    up)      topo_up ;;
+    down)    topo_down ;;
+    rebuild) topo_rebuild ;;
+    map)     topo_diagram ;;
+    *) die "usage: netlab lab up|down|rebuild|map" ;;
+  esac
+}
+
+# ---------------------------------------------------------------- cmd: k8s --
+cmd_k8s() {
+  case "${1:-status}" in
+    up|install) k8s_install ;;
+    down)       k8s_uninstall ;;
+    status)     k8s_status ;;
+    reset)      k8s_reset_ns ;;
+    dash|iptables) k8s_show_iptables ;;
+    *) die "usage: netlab k8s up|down|status|reset|iptables" ;;
+  esac
+}
+
+# --------------------------------------------------------------- cmd: help --
+cmd_help() {
+  cat "$NETLAB_ROOT/lib/usage.txt" 2>/dev/null && return
+  printf 'netlab v%s\n' "$VERSION"
+}
+
+# ------------------------------------------------------------------- main ---
+main() {
+  ensure_dirs 2>/dev/null || true
+  local cmd="${1:-help}"; shift || true
+  case "$cmd" in
+    lab)             cmd_lab "$@" ;;
+    list|ls)         cmd_list "$@" ;;
+    start)           cmd_start "$@" ;;
+    challenge)       cmd_challenge "$@" ;;
+    reveal)          cmd_reveal "$@" ;;
+    check|verify)    cmd_check "$@" ;;
+    hint)            cmd_hint "$@" ;;
+    solution|answer) cmd_solution "$@" ;;
+    reset)           cmd_reset "$@" ;;
+    status|st)       cmd_status ;;
+    progress)        cmd_progress ;;
+    exec)            cmd_exec "$@" ;;
+    sh|shell)        cmd_sh "$@" ;;
+    guide|guides)    cmd_guide "$@" ;;
+    doctor)          cmd_doctor ;;
+    snapshot|snap)   cmd_snapshot "$@" ;;
+    deadman)         cmd_deadman "$@" ;;
+    deadman-cancel)  cmd_deadman_cancel ;;
+    k8s|kube)        cmd_k8s "$@" ;;
+    version|-v|--version) printf 'netlab %s\n' "$VERSION" ;;
+    help|-h|--help)  cmd_help ;;
+    *) err "Unknown command: $cmd"; cmd_help; exit 1 ;;
+  esac
+}
+
+main "$@"

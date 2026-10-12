@@ -1,0 +1,11 @@
+# Values entered in the Cloudflare Tunnel public-hostname route.
+hostname: example.invalid
+service: https://127.0.0.1:443
+originRequest:
+  originServerName: academy.example.invalid
+  caPool: /etc/cloudflared/local-ca.crt
+  httpHostHeader: example.invalid
+  connectTimeout: 30s
+  tlsTimeout: 10s
+  keepAliveTimeout: 90s
+
