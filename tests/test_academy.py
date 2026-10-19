@@ -11,7 +11,7 @@ from cryptography.hazmat.primitives import padding
 from sqlalchemy import select
 from academy.app import create_app
 from academy.config import Settings
-from academy.db import Lab, LabSession, Job, Result, ConsoleGrant, HttpTunnel
+from academy.db import Lab, LabSession, Job, Result, ConsoleGrant, HttpTunnel, User
 from academy.worker import execute_job, tick
 from academy.security import guac_data, encrypt_key, decrypt_key, digest
 from academy.console_proxy import authorize
@@ -117,6 +117,79 @@ def test_csrf_disabled_labs_roles_and_allowlist(system):
     learner = user_client(system, "learner-three")
     assert learner.get("/api/admin/overview").status_code == 403
     assert learner.post("/api/admin/users", json={"username": "evil", "password": "123456789012"}).status_code == 403
+
+
+def test_admin_password_reset_revokes_existing_signins(system):
+    app, admin, _, _ = system
+    learner = user_client(system, "reset-target")
+    second_login = TestClient(app)
+    old_login = second_login.post("/api/login", json={
+        "username": "reset-target", "password": "TestOnly-Learner-123"})
+    second_login.headers["X-CSRF-Token"] = old_login.json()["csrf"]
+    with app.state.factory() as db:
+        user = db.scalar(select(User).where(User.username == "reset-target"))
+        user_id = user.id
+
+    reset = admin.put(f"/api/admin/users/{user_id}/password", json={
+        "new_password": "Reset-password-456!"})
+    assert reset.status_code == 200, reset.text
+    assert learner.get("/api/me").status_code == 401
+    assert second_login.get("/api/me").status_code == 401
+    assert TestClient(app).post("/api/login", json={
+        "username": "reset-target", "password": "TestOnly-Learner-123"}).status_code == 401
+    assert TestClient(app).post("/api/login", json={
+        "username": "reset-target", "password": "Reset-password-456!"}).status_code == 200
+    with app.state.factory() as db:
+        admin_id = db.scalar(select(User).where(User.username == "admin")).id
+    assert admin.put(f"/api/admin/users/{admin_id}/password", json={
+        "new_password": "Another-password-789!"}).status_code == 409
+    reauthenticated = TestClient(app)
+    new_login = reauthenticated.post("/api/login", json={
+        "username": "reset-target", "password": "Reset-password-456!"})
+    reauthenticated.headers["X-CSRF-Token"] = new_login.json()["csrf"]
+    assert reauthenticated.put(f"/api/admin/users/{user_id}/password", json={
+        "new_password": "Another-password-789!"}).status_code == 403
+
+
+def test_admin_removal_revokes_access_ends_lab_and_preserves_records(system):
+    app, admin, provider, _ = system
+    learner = user_client(system, "remove-target")
+    created = learner.post("/api/sessions", json={"lab_id": "netlab"}).json()
+    with app.state.factory() as db:
+        user = db.scalar(select(User).where(User.username == "remove-target"))
+        user_id = user.id
+        db.add(Result(user_id=user_id, lab_id="netlab", drill_id="net-01-link-down",
+                      passed=False, output="Retained training record"))
+        db.commit()
+
+    # Do not remove access while an in-flight VM operation could race cleanup.
+    blocked = admin.put(f"/api/admin/users/{user_id}", json={"enabled": False})
+    assert blocked.status_code == 409
+    with app.state.factory() as db:
+        assert db.get(User, user_id).enabled is True
+
+    process(system)
+    removed = admin.put(f"/api/admin/users/{user_id}", json={"enabled": False})
+    assert removed.status_code == 200, removed.text
+    assert "cleanup queued" in removed.json()["message"]
+    assert learner.get("/api/me").status_code == 401
+    with app.state.factory() as db:
+        assert db.get(LabSession, created["id"]).state == "ending"
+        assert db.scalar(select(Result).where(Result.user_id == user_id)).output == "Retained training record"
+
+    process(system)
+    assert not provider.vms
+    with app.state.factory() as db:
+        assert db.get(LabSession, created["id"]).state == "ended"
+        assert db.get(User, user_id).enabled is False
+
+    assert admin.put(f"/api/admin/users/{user_id}", json={"enabled": True}).status_code == 200
+    assert TestClient(app).post("/api/login", json={
+        "username": "remove-target", "password": "TestOnly-Learner-123"}).status_code == 200
+    assert admin.put("/api/admin/users/missing-account", json={"enabled": False}).status_code == 404
+    with app.state.factory() as db:
+        admin_id = db.scalar(select(User).where(User.username == "admin")).id
+    assert admin.put(f"/api/admin/users/{admin_id}", json={"enabled": False}).status_code == 409
 
 
 def test_capacity_and_expiration(system):

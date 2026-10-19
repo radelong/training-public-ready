@@ -35,6 +35,14 @@ class PasswordChange(BaseModel):
     new_password: str = Field(min_length=12, max_length=128)
 
 
+class AdminPasswordReset(BaseModel):
+    new_password: str = Field(min_length=12, max_length=128)
+
+
+class AdminUserStatus(BaseModel):
+    enabled: bool
+
+
 class Launch(BaseModel):
     lab_id: str = Field(max_length=64)
 
@@ -115,6 +123,17 @@ def create_app(settings=None, provider=None):
             raise HTTPException(403, "Administrator access required")
         return auth
 
+
+    def revoke_user_logins(db, user_id, except_token=None):
+        query = select(Login).where(Login.user_id == user_id)
+        if except_token:
+            query = query.where(Login.token_hash != except_token)
+        for value in db.scalars(query).all():
+            for grant in db.scalars(select(ConsoleGrant).where(
+                    ConsoleGrant.login_hash == value.token_hash)):
+                db.delete(grant)
+            db.delete(value)
+
     def session_owned(db, session_id, user):
         value = db.get(LabSession, session_id)
         if not value or value.user_id != user.id:
@@ -183,11 +202,7 @@ def create_app(settings=None, provider=None):
             raise HTTPException(400, "Current password is incorrect")
         auth[0].password_hash = password_hash(body.new_password)
         # Revoke all other logins and their console capabilities.
-        for value in db.scalars(select(Login).where(Login.user_id == auth[0].id,
-                                                    Login.token_hash != auth[1].token_hash)):
-            for grant in db.scalars(select(ConsoleGrant).where(ConsoleGrant.login_hash == value.token_hash)):
-                db.delete(grant)
-            db.delete(value)
+        revoke_user_logins(db, auth[0].id, except_token=auth[1].token_hash)
         db.add(Audit(user_id=auth[0].id, action="password_change"))
         db.commit()
         return {"message": "Password updated"}
@@ -340,6 +355,59 @@ def create_app(settings=None, provider=None):
             db.rollback()
             raise HTTPException(409, "That username already exists")
         return {"id": user.id, "username": user.username}
+
+    @app.put("/api/admin/users/{user_id}/password")
+    def admin_reset_password(user_id: str, body: AdminPasswordReset,
+                             auth=Depends(administrator), db=Depends(get_db)):
+        allocation_lock(db)
+        user = db.get(User, user_id)
+        if not user:
+            raise HTTPException(404, "Account not found")
+        if user.id == auth[0].id:
+            raise HTTPException(409, "Use My account to change your own password")
+        user.password_hash = password_hash(body.new_password)
+        revoke_user_logins(db, user.id)
+        db.add(Audit(user_id=auth[0].id, action="admin_reset_password", target=user.username))
+        db.commit()
+        return {"message": "Password reset; existing sign-ins revoked"}
+
+    @app.put("/api/admin/users/{user_id}")
+    def update_user_status(user_id: str, body: AdminUserStatus,
+                           auth=Depends(administrator), db=Depends(get_db)):
+        allocation_lock(db)
+        user = db.get(User, user_id)
+        if not user:
+            raise HTTPException(404, "Account not found")
+        if user.enabled == body.enabled:
+            return {"message": "Account status unchanged"}
+        if not body.enabled and user.id == auth[0].id:
+            raise HTTPException(409, "You cannot remove your own account")
+        if not body.enabled and user.role == "admin" and db.scalar(
+                select(func.count(User.id)).where(User.enabled.is_(True), User.role == "admin")) <= 1:
+            raise HTTPException(409, "The last active administrator cannot be removed")
+
+        live_sessions = list(db.scalars(select(LabSession).where(
+            LabSession.user_id == user.id, LabSession.state != "ended"))) if not body.enabled else []
+        for session in live_sessions:
+            if db.scalars(select(Job).where(
+                    Job.session_id == session.id, Job.state.in_(("queued", "running")))).first():
+                raise HTTPException(409, "Wait for this account's current lab operation to finish")
+        for session in live_sessions:
+            session.state = "ending"
+            db.add(Job(session_id=session.id, action="end"))
+
+        user.enabled = body.enabled
+        if not body.enabled:
+            revoke_user_logins(db, user.id)
+            failure = db.get(LoginFailure, digest(user.username.lower()))
+            if failure:
+                db.delete(failure)
+        db.add(Audit(user_id=auth[0].id,
+                     action="remove_user" if not body.enabled else "restore_user",
+                     target=user.username))
+        db.commit()
+        return {"message": "Account removed; lab cleanup queued and learning records retained"
+                if not body.enabled else "Account restored"}
 
     @app.put("/api/admin/labs/{lab_id}")
     def update_lab(lab_id: str, body: LabUpdate, auth=Depends(administrator), db=Depends(get_db)):

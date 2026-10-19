@@ -6,7 +6,7 @@
   <link rel="stylesheet" href="/static/academy.css">
   <link rel="stylesheet" href="/static/academy-mobile.css">
   <script src="/static/terminal-focus.js?v=20261010-1" defer></script>
-<script src="/static/academy.js?v=20261010-8" defer></script>
+<script src="/static/academy.js?v=20261019-admin-account-management-1" defer></script>
 <link rel="stylesheet" href="/static/learning.css?v=20261011-1">
 <script src="/static/learning.js?v=20261011-4" defer></script>
 </head>
@@ -34,4 +34,5 @@
   </div>
 </div>
 <dialog id="confirm-dialog"><form method="dialog"><p class="eyebrow">LAB ACTION</p><h2 id="confirm-title"></h2><p id="confirm-text"></p><div class="button-row"><button value="cancel" class="secondary">Cancel</button><button value="confirm" class="danger" id="confirm-button">Continue</button></div></form></dialog>
+<dialog id="admin-password-dialog"><form id="admin-password-form" class="form-panel"><p class="eyebrow">ACCOUNT SECURITY</p><h2>Reset password</h2><p id="admin-password-user" class="muted"></p><label for="admin-new-password">New password</label><input id="admin-new-password" name="new_password" type="password" minlength="12" maxlength="128" autocomplete="new-password" required><p class="small muted">Use at least 12 characters. Existing sign-ins will be revoked.</p><div class="button-row"><button type="button" class="secondary" data-admin-password-cancel>Cancel</button><button type="submit" class="primary">Set password</button></div></form></dialog>
 </body></html>
