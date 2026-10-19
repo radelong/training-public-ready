@@ -251,7 +251,7 @@ def create_app(settings=None, provider=None):
         value = session_owned(db, session_id, auth[0])
         result = session_view(value)
         jobs = db.scalars(select(Job).where(Job.session_id == value.id).order_by(Job.created.desc()).limit(6))
-        result["jobs"] = [{"id": j.id, "action": j.action, "state": j.state,
+        result["jobs"] = [{"id": j.id, "action": j.action, "drill_id": j.argument, "state": j.state,
                            "message": j.message, "updated": j.updated} for j in jobs]
         return result
 
@@ -312,6 +312,8 @@ def create_app(settings=None, provider=None):
                       "private-key": decrypt_key(value.key_cipher, s.master_key, value.id),
                       "host-key": value.host_key, "font-name": "monospace", "font-size": "14",
                       "color-scheme": "gray-black", "enable-sftp": "false", "server-alive-interval": "15"}
+        if value.lab_id == "linux":
+            parameters["command"] = "/usr/local/sbin/academy-lab shell"
         encoded = guac_data(f"{auth[0].id}:{value.id}:{value.generation}", parameters, s.guac_key)
         try:
             async with httpx.AsyncClient(timeout=20) as client:

@@ -83,6 +83,8 @@ def test_lifecycle_results_reset_release(system):
     assert client.post(path, json={"action": "start", "drill_id": drill}).status_code == 200
     assert client.post(path, json={"action": "end"}).status_code == 409
     process(system)
+    jobs = client.get(f"/api/sessions/{id}").json()["jobs"]
+    assert jobs[0]["action"] == "start" and jobs[0]["drill_id"] == drill
     assert client.post(path, json={"action": "check", "drill_id": drill}).status_code == 200
     process(system)
     assert client.get("/api/results").json()[0]["passed"] is False
