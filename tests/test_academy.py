@@ -15,15 +15,24 @@ from academy.db import Lab, LabSession, Job, Result, ConsoleGrant, HttpTunnel, U
 from academy.worker import execute_job, tick
 from academy.security import guac_data, encrypt_key, decrypt_key, digest
 from academy.console_proxy import authorize
+from academy import agreement
 from fakes import FakeProxmox
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def accepted_client(app):
+    client = TestClient(app)
+    version = client.get("/api/terms/status").json()["version"]
+    response = client.post("/api/terms/accept", json={"agree": True, "version": version})
+    assert response.status_code == 200, response.text
+    return client
+
+
 @pytest.fixture
 def system(tmp_path):
     settings = Settings(database_url="sqlite:///" + str(tmp_path / "test.db"), master_key="a1" * 32,
-                        guac_key="b2" * 16, admin_password="TestOnly-Admin-123!", cookie_secure=False,
+                        guac_key="b2" * 16, admin_password="Administrator-123!", cookie_secure=False,
                         catalogue=str(ROOT / "catalogue.json"), static_dir=str(ROOT / "frontend"),
                         content_dir=str(tmp_path / "content"), capacity=3)
     provider = FakeProxmox()
@@ -32,7 +41,7 @@ def system(tmp_path):
         for value in db.scalars(select(Lab).where(Lab.id.in_(["netlab", "linux"]))):
             value.enabled = True
         db.commit()
-    client = TestClient(app)
+    client = accepted_client(app)
     auth = client.post("/api/login", json={"username": "admin", "password": settings.admin_password}).json()
     client.headers["X-CSRF-Token"] = auth["csrf"]
     return app, client, provider, settings
@@ -53,11 +62,50 @@ def launch(system, lab="netlab"):
 
 def user_client(system, name):
     app, admin, _, _ = system
-    assert admin.post("/api/admin/users", json={"username": name, "password": "TestOnly-Learner-123"}).status_code == 200
-    client = TestClient(app)
-    response = client.post("/api/login", json={"username": name, "password": "TestOnly-Learner-123"})
+    assert admin.post("/api/admin/users", json={"username": name, "password": "Learner-password-123"}).status_code == 200
+    client = accepted_client(app)
+    response = client.post("/api/login", json={"username": name, "password": "Learner-password-123"})
     client.headers["X-CSRF-Token"] = response.json()["csrf"]
     return client
+
+
+def test_agreement_gates_sign_in_on_each_hostname(system):
+    app, _, _, settings = system
+    training = TestClient(app, base_url="https://academy.example.com")
+    assert 'id="splash-view"' in training.get("/").text
+    status = training.get("/api/terms/status")
+    assert status.json() == {"accepted": False, "version": agreement.VERSION}
+    credentials = {"username": "admin", "password": settings.admin_password}
+    assert training.post("/api/login", json=credentials).status_code == 403
+    assert training.post("/api/terms/accept", json={
+        "agree": False, "version": agreement.VERSION}).status_code == 422
+    assert training.post("/api/terms/accept", json={
+        "agree": True, "version": "old"}).status_code == 409
+    assert training.post("/api/terms/accept", json={
+        "agree": True, "version": agreement.VERSION},
+        headers={"Origin": "https://other.example"}).status_code == 403
+    assert training.post("/api/terms/accept", json={
+        "agree": True, "version": agreement.VERSION}).status_code == 200
+    assert training.get("/api/terms/status").json()["accepted"] is True
+    assert training.post("/api/login", json=credentials).status_code == 200
+
+    other = TestClient(app, base_url="https://training.example.net")
+    assert other.get("/api/terms/status").json()["accepted"] is False
+    assert other.post("/api/login", json=credentials).status_code == 403
+    other.cookies.set(agreement.COOKIE_NAME, "tampered")
+    assert other.post("/api/login", json=credentials).status_code == 403
+    other.cookies.clear()
+    assert other.post("/api/terms/accept", json={
+        "agree": True, "version": agreement.VERSION}).status_code == 200
+    assert other.post("/api/login", json=credentials).status_code == 200
+
+
+def test_agreement_cookie_expires_and_is_version_bound():
+    key = "a1" * 32
+    cookie = agreement.signed_acceptance(key, now=1000)
+    assert agreement.accepted_at(cookie, key, now=1001) == 1000
+    assert agreement.accepted_at(cookie, key, now=1000 + agreement.MAX_AGE + 1) is None
+    assert agreement.accepted_at(cookie.replace(agreement.VERSION, "old", 1), key, now=1001) is None
 
 
 def test_launch_reconnect_and_independent_users(system):
@@ -124,9 +172,9 @@ def test_csrf_disabled_labs_roles_and_allowlist(system):
 def test_admin_password_reset_revokes_existing_signins(system):
     app, admin, _, _ = system
     learner = user_client(system, "reset-target")
-    second_login = TestClient(app)
+    second_login = accepted_client(app)
     old_login = second_login.post("/api/login", json={
-        "username": "reset-target", "password": "TestOnly-Learner-123"})
+        "username": "reset-target", "password": "Learner-password-123"})
     second_login.headers["X-CSRF-Token"] = old_login.json()["csrf"]
     with app.state.factory() as db:
         user = db.scalar(select(User).where(User.username == "reset-target"))
@@ -137,15 +185,15 @@ def test_admin_password_reset_revokes_existing_signins(system):
     assert reset.status_code == 200, reset.text
     assert learner.get("/api/me").status_code == 401
     assert second_login.get("/api/me").status_code == 401
-    assert TestClient(app).post("/api/login", json={
-        "username": "reset-target", "password": "TestOnly-Learner-123"}).status_code == 401
-    assert TestClient(app).post("/api/login", json={
+    assert accepted_client(app).post("/api/login", json={
+        "username": "reset-target", "password": "Learner-password-123"}).status_code == 401
+    assert accepted_client(app).post("/api/login", json={
         "username": "reset-target", "password": "Reset-password-456!"}).status_code == 200
     with app.state.factory() as db:
         admin_id = db.scalar(select(User).where(User.username == "admin")).id
     assert admin.put(f"/api/admin/users/{admin_id}/password", json={
         "new_password": "Another-password-789!"}).status_code == 409
-    reauthenticated = TestClient(app)
+    reauthenticated = accepted_client(app)
     new_login = reauthenticated.post("/api/login", json={
         "username": "reset-target", "password": "Reset-password-456!"})
     reauthenticated.headers["X-CSRF-Token"] = new_login.json()["csrf"]
@@ -186,8 +234,8 @@ def test_admin_removal_revokes_access_ends_lab_and_preserves_records(system):
         assert db.get(User, user_id).enabled is False
 
     assert admin.put(f"/api/admin/users/{user_id}", json={"enabled": True}).status_code == 200
-    assert TestClient(app).post("/api/login", json={
-        "username": "remove-target", "password": "TestOnly-Learner-123"}).status_code == 200
+    assert accepted_client(app).post("/api/login", json={
+        "username": "remove-target", "password": "Learner-password-123"}).status_code == 200
     assert admin.put("/api/admin/users/missing-account", json={"enabled": False}).status_code == 404
     with app.state.factory() as db:
         admin_id = db.scalar(select(User).where(User.username == "admin")).id
@@ -274,11 +322,11 @@ def test_console_grant_bound_to_login_and_generation(system):
 
 
 def test_login_rate_limit_and_cross_site(system):
-    client = TestClient(system[0])
+    client = accepted_client(system[0])
     for i in range(8):
         assert client.post("/api/login", json={"username":"nobody","password":"bad"}).status_code == 401
     assert client.post("/api/login", json={"username":"nobody","password":"bad"}).status_code == 429
-    assert client.post("/api/login", json={"username":"admin","password":"TestOnly-Admin-123!"},
+    assert client.post("/api/login", json={"username":"admin","password":"Administrator-123!"},
                        headers={"Origin":"https://outside.example"}).status_code == 403
 
 
@@ -295,9 +343,9 @@ def test_frontend_is_local_and_has_no_embedded_secrets(system):
 
 def test_logout_and_password_change(system):
     client = system[1]
-    assert client.post("/api/password", json={"current_password":"wrong","new_password":"TestOnly-Changed-123!"}).status_code == 400
-    assert client.post("/api/password", json={"current_password":"TestOnly-Admin-123!","new_password":"TestOnly-Changed-123!"}).status_code == 200
+    assert client.post("/api/password", json={"current_password":"wrong","new_password":"Long-new-password-123"}).status_code == 400
+    assert client.post("/api/password", json={"current_password":"Administrator-123!","new_password":"Long-new-password-123"}).status_code == 200
     assert client.post("/api/logout", json={}).status_code == 200
     assert client.get("/api/me").status_code == 401
-    assert client.post("/api/login",json={"username":"admin","password":"TestOnly-Admin-123!"}).status_code == 401
-    assert client.post("/api/login",json={"username":"admin","password":"TestOnly-Changed-123!"}).status_code == 200
+    assert client.post("/api/login",json={"username":"admin","password":"Administrator-123!"}).status_code == 401
+    assert client.post("/api/login",json={"username":"admin","password":"Long-new-password-123"}).status_code == 200

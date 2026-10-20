@@ -1,5 +1,5 @@
 "use strict";
-const state={user:null,labs:[],sessions:[],results:[],page:"catalog",current:null,drill:null,detail:null,consoleUrl:null,consoleConnecting:false,consoleAutoFailedFor:null};
+const state={user:null,labs:[],sessions:[],results:[],page:"catalog",current:null,drill:null,detail:null,consoleUrl:null,consoleConnecting:false,consoleAutoFailedFor:null,termsVersion:null};
 const $=(id)=>document.getElementById(id);
 const esc=(value)=>String(value??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const date=(stamp)=>new Date(stamp*1000).toLocaleString();
@@ -7,9 +7,10 @@ const labFor=(id)=>state.labs.find(l=>l.id===id);
 function repairConsoleStorage(){try{const key="GUAC_AUTH_TOKEN",saved=localStorage.getItem(key);if(saved!==null){let value;try{value=JSON.parse(saved);}catch{}if(typeof value!=="string"||!value)localStorage.removeItem(key);}}catch{}}
 function notify(message){$("toast").textContent=message;$("toast").hidden=false;clearTimeout(notify.timer);notify.timer=setTimeout(()=>$("toast").hidden=true,6500);}
 async function api(path,method="GET",data){const response=await fetch("/api"+path,{method,credentials:"same-origin",headers:{...(data?{"Content-Type":"application/json"}:{}),...(state.user?{"X-CSRF-Token":state.user.csrf}:{})},...(data?{body:JSON.stringify(data)}:{})});let result;try{result=await response.json();}catch{result={detail:"The service did not return a valid response"};}if(!response.ok){if(response.status===401&&path!=="/login")showLogin();throw new Error(typeof result.detail==="string"?result.detail:"Review the entered values and try again");}return result;}
-function showLogin(){state.user=null;state.consoleUrl=null;$("content").replaceChildren();$("login-view").hidden=false;$("app-view").hidden=true;}
+function showSplash(){state.user=null;state.consoleUrl=null;$("content").replaceChildren();$("splash-view").hidden=false;$("login-view").hidden=true;$("app-view").hidden=true;}
+function showLogin(){state.user=null;state.consoleUrl=null;$("content").replaceChildren();$("splash-view").hidden=true;$("login-view").hidden=false;$("app-view").hidden=true;}
 async function refresh(){[state.labs,state.sessions,state.results]=await Promise.all([api("/labs"),api("/sessions"),api("/results")]);state.labs.sort((a,b)=>(["netlab","linux"].indexOf(a.id))-( ["netlab","linux"].indexOf(b.id)));$("seat-count").textContent=state.sessions.length;}
-async function enter(user){state.user=user;$("password").value="";$("login-view").hidden=true;$("app-view").hidden=false;$("user-label").textContent=user.username;document.querySelectorAll(".admin-only").forEach(e=>e.hidden=user.role!=="admin");await refresh();await page("catalog");}
+async function enter(user){state.user=user;$("password").value="";$("splash-view").hidden=true;$("login-view").hidden=true;$("app-view").hidden=false;$("user-label").textContent=user.username;document.querySelectorAll(".admin-only").forEach(e=>e.hidden=user.role!=="admin");await refresh();await page("catalog");}
 function passed(lab){return new Set(state.results.filter(r=>r.lab_id===lab&&r.passed).map(r=>r.drill_id));}
 function badge(value){return `<span class="status-pill ${esc(value)}">${esc({queued:"Queued",provisioning:"Preparing VM",ready:"Ready",resetting:"Resetting",ending:"Ending",ended:"Ended",error:"Needs attention"}[value]||value)}</span>`;}
 function heading(title,description,actions=""){return `<div class="page-heading"><div><p class="eyebrow">TRAINING ACADEMY</p><h1>${esc(title)}</h1><p class="muted">${esc(description)}</p></div>${actions}</div>`;}
@@ -59,6 +60,8 @@ document.addEventListener("click",async event=>{
   }catch(error){target.disabled=false;notify(error.message);}
 });
 $("login-form").addEventListener("submit",async e=>{e.preventDefault();const button=e.target.querySelector("button");button.disabled=true;$("login-error").textContent="";try{const user=await api("/login","POST",{username:$("username").value,password:$("password").value});await enter(user);}catch(error){$("login-error").textContent=error.message;}finally{button.disabled=false;}});
+$("terms-agree").addEventListener("change",()=>{$("terms-continue").disabled=!$("terms-agree").checked;});
+$("terms-form").addEventListener("submit",async e=>{e.preventDefault();if(!$("terms-agree").checked)return;const button=$("terms-continue");button.disabled=true;$("terms-error").textContent="";try{await api("/terms/accept","POST",{agree:true,version:state.termsVersion});showLogin();$("username").focus();}catch(error){$("terms-error").textContent=error.message;}finally{button.disabled=!$("terms-agree").checked;}});
 $("logout").addEventListener("click",async()=>{try{await api("/logout","POST",{});showLogin();}catch(error){notify(error.message);}});
 document.addEventListener("submit",async e=>{
   const form=e.target;
@@ -72,4 +75,4 @@ document.addEventListener("submit",async e=>{
   }catch(error){notify(error.message);}finally{if(button)button.disabled=false;}
 });
 setInterval(async()=>{if(!state.user)return;try{await refresh();if(state.current){const latest=await api("/sessions/"+state.current);if(JSON.stringify(latest)!==JSON.stringify(state.detail)){state.detail=latest;if(latest.state==="ended"){notify("Lab ended. Your results are saved.");await page("sessions");}else {renderWorkspace();await connectConsole();}}}else if(["catalog","sessions"].includes(state.page))render();}catch(error){if(state.user)notify(error.message);}},3000);
-(async()=>{try{await enter(await api("/me"));}catch{showLogin();}})();
+(async()=>{try{const terms=await api("/terms/status");state.termsVersion=terms.version;$("terms-version").textContent=terms.version;if(!terms.accepted){showSplash();return;}try{await enter(await api("/me"));}catch{showLogin();}}catch{$("terms-error").textContent="The agreement could not be loaded. Reload the page to try again.";showSplash();}})();

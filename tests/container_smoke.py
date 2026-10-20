@@ -27,6 +27,8 @@ with app.state.factory() as db:
     db.get(Lab, "netlab").enabled = True
     db.commit()
 client = TestClient(app, base_url="https://testserver")
+version = client.get("/api/terms/status").json()["version"]
+assert client.post("/api/terms/accept", json={"agree": True, "version": version}).status_code == 200
 response = client.post("/api/login", json={"username":"admin","password":s.admin_password})
 assert response.status_code == 200, response.text
 client.headers["X-CSRF-Token"] = response.json()["csrf"]
@@ -69,9 +71,9 @@ r = client.post('/api/admin/courses/' + course['id'] + '/publish', json={"revisi
 assert r.status_code == 200, r.text
 version_id = r.json()['id']
 learner = TestClient(app, base_url="https://testserver")
-r = client.post('/api/admin/users', json={"username": "class-check", "password": "REPLACE_WITH_YOUR_SECRET", "role": "learner"})
+r = client.post('/api/admin/users', json={"username": "class-check", "password": "Class-check-password-123", "role": "learner"})
 assert r.status_code == 200, r.text
-r = learner.post('/api/login', json={"username": "class-check", "password": "REPLACE_WITH_YOUR_SECRET"})
+r = learner.post('/api/login', json={"username": "class-check", "password": "Class-check-password-123"})
 assert r.status_code == 200, r.text
 learner.headers['X-CSRF-Token'] = r.json()['csrf']
 assert 'correct' not in learner.get('/api/course-versions/' + version_id).json()['content']['exam']['questions'][0]

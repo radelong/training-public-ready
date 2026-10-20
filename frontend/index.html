@@ -3,24 +3,46 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Training Academy</title>
-  <link rel="stylesheet" href="/static/academy.css">
+  <link rel="stylesheet" href="/static/academy.css?v=20261020-agreement-1">
   <link rel="stylesheet" href="/static/academy-mobile.css">
   <script src="/static/terminal-focus.js?v=20261010-1" defer></script>
-<script src="/static/academy.js?v=20261019-linux-lesson-context-2" defer></script>
-<link rel="stylesheet" href="/static/learning.css?v=20261011-1">
+<script src="/static/academy.js?v=20261020-agreement-1" defer></script>
+<link rel="stylesheet" href="/static/learning.css?v=20261016-python-prompts-1">
 <script src="/static/learning.js?v=20261011-4" defer></script>
 </head>
 <body>
-<div id="login-view" class="login-layout">
+<div id="splash-view" class="login-layout">
+  <section class="login-intro splash-intro"><div class="brand"><span class="brand-mark">A</span><span><strong>Training Academy</strong></span></div>
+    <div><p class="eyebrow">HANDS-ON TRAINING / PRIVATE LABS</p><h1>Prepare here.<br>Perform anywhere.</h1><p>Practice in dedicated lab environments, work through guided exercises, and build skills before they are needed on the job.</p>
+      <div class="login-topology"><span>LEARN</span><i></i><span>PRACTICE</span><i></i><span>VERIFY</span></div></div>
+    <p class="small">Your Academy account and assigned labs are for approved training use.</p>
+  </section>
+  <section class="login-panel terms-panel" aria-labelledby="terms-heading"><div class="terms-card">
+    <p class="eyebrow">BEFORE YOU SIGN IN</p><h2 id="terms-heading">Training Academy user agreement</h2>
+    <p class="muted">Please review these conditions before accessing classes or hands-on labs.</p>
+    <p class="small muted terms-scroll-note">Scroll within the agreement to review all sections.</p>
+    <div class="terms-copy" tabindex="0" aria-label="User agreement">
+      <h3>Authorized use</h3><p>Use the Academy only for training assigned or approved by your training administrator. Do not attempt to access another user's account, lab session, files, or administrative functions.</p>
+      <h3>Accounts and information</h3><p>Keep your sign-in credentials private. Do not put production passwords, classified information, personal records, or other sensitive operational data into lessons, exams, or lab VMs.</p>
+      <h3>Lab environments</h3><p>Lab VMs are temporary practice environments. They may expire, reset, or be deleted when a session ends. Save only work your instructor asks you to retain outside the lab. Do not use Academy systems to attack or disrupt other systems.</p>
+      <h3>Training records</h3><p>The Academy records account activity, class and exam progress, lab results, and administrative actions to operate training and assess readiness. Authorized administrators may review these records.</p>
+      <h3>Availability and conduct</h3><p>Training services may be unavailable during maintenance. Report security concerns or unexpected access to your training administrator. Misuse may result in loss of access.</p>
+    </div>
+    <form id="terms-form"><label class="terms-check" for="terms-agree"><input id="terms-agree" type="checkbox" required><span>I have read and agree to the Training Academy user agreement.</span></label>
+      <p id="terms-error" role="alert" class="error"></p><button id="terms-continue" class="primary" type="submit" disabled>Agree and continue to sign in <span aria-hidden="true">&rarr;</span></button></form>
+    <p class="small muted">Agreement version <span id="terms-version">2026-10-20</span></p>
+  </div></section>
+</div>
+<div id="login-view" class="login-layout" hidden>
   <section class="login-intro"><div class="brand"><span class="brand-mark">A</span><span><strong>Training Academy</strong></span></div>
-    <div><p class="eyebrow">LOCAL TRAINING • HANDS-ON READINESS</p><h1>Build confidence.<br>Practice the work.</h1><p>Independent lab environments. Real troubleshooting. A place to learn, repeat and prepare for the next shift.</p>
+    <div><p class="eyebrow">HANDS-ON TRAINING &bull; READINESS</p><h1>Build confidence.<br>Practice the work.</h1><p>Independent lab environments. Real troubleshooting. A place to learn, repeat and prepare for the next shift.</p>
       <div class="login-topology"><span>CLIENT</span><i></i><span>ROUTER</span><i></i><span>SERVER</span></div></div>
-    <p class="small">Training and lab services operate on your local network.</p>
+    <p class="small">Training and lab services run in protected on-premises environments.</p>
   </section>
   <section class="login-panel"><form id="login-form"><p class="eyebrow">WELCOME BACK</p><h2>Sign in to your academy</h2><p class="muted">Use the account provided by your training administrator.</p>
     <label for="username">Username</label><input id="username" name="username" autocomplete="username" required>
     <label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required>
-    <p id="login-error" role="alert" class="error"></p><button class="primary" type="submit">Sign in <span aria-hidden="true">→</span></button>
+    <p id="login-error" role="alert" class="error"></p><button class="primary" type="submit">Sign in <span aria-hidden="true">&rarr;</span></button>
     <p class="small muted">Need an account? Contact your local training administrator.</p>
   </form></section>
 </div>

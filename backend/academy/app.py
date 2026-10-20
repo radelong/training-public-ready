@@ -7,6 +7,7 @@ import re
 import secrets
 import time
 from pathlib import Path
+from typing import Literal
 from urllib.parse import urlencode
 import httpx
 from fastapi import FastAPI, Request, Response, HTTPException, Depends
@@ -19,11 +20,17 @@ from .config import Settings
 from .db import (database, allocation_lock, User, Login, LoginFailure, Lab, LabSession,
                  Job, Result, Audit, Heartbeat, ConsoleGrant)
 from .security import password_hash, password_ok, digest, decrypt_key, guac_data
+from . import agreement
 
 
 class Credentials(BaseModel):
     username: str = Field(min_length=1, max_length=64)
     password: str = Field(min_length=1, max_length=128)
+
+
+class AgreementAcceptance(BaseModel):
+    agree: Literal[True]
+    version: str
 
 
 class NewUser(Credentials):
@@ -123,12 +130,12 @@ def create_app(settings=None, provider=None):
             raise HTTPException(403, "Administrator access required")
         return auth
 
-
     def revoke_user_logins(db, user_id, except_token=None):
         query = select(Login).where(Login.user_id == user_id)
         if except_token:
             query = query.where(Login.token_hash != except_token)
-        for value in db.scalars(query).all():
+        logins = db.scalars(query).all()
+        for value in logins:
             for grant in db.scalars(select(ConsoleGrant).where(
                     ConsoleGrant.login_hash == value.token_hash)):
                 db.delete(grant)
@@ -149,12 +156,33 @@ def create_app(settings=None, provider=None):
         db.execute(select(func.count(User.id)))
         return {"status": "ok", "database": "ready"}
 
+    @app.get("/api/terms/status")
+    def terms_status(request: Request):
+        accepted = agreement.accepted_at(request.cookies.get(agreement.COOKIE_NAME, ""), s.master_key)
+        return {"accepted": accepted is not None, "version": agreement.VERSION}
+
+    @app.post("/api/terms/accept")
+    def accept_terms(body: AgreementAcceptance, request: Request, response: Response):
+        origin = request.headers.get("Origin")
+        if origin and origin.rstrip("/") != str(request.base_url).rstrip("/"):
+            raise HTTPException(403, "Cross-site agreement submission blocked")
+        if body.version != agreement.VERSION:
+            raise HTTPException(409, "Agreement changed; reload and review the current terms")
+        response.set_cookie(agreement.COOKIE_NAME,
+                            agreement.signed_acceptance(s.master_key),
+                            httponly=True, secure=s.cookie_secure, samesite="strict",
+                            max_age=agreement.MAX_AGE, path="/")
+        return {"accepted": True, "version": agreement.VERSION}
+
     @app.post("/api/login")
     def login(body: Credentials, request: Request, response: Response, db=Depends(get_db)):
         # Login has no prior CSRF token; reject browser cross-site submission explicitly.
         origin = request.headers.get("Origin")
         if origin and origin.rstrip("/") != str(request.base_url).rstrip("/"):
             raise HTTPException(403, "Cross-site sign-in blocked")
+        accepted = agreement.accepted_at(request.cookies.get(agreement.COOKIE_NAME, ""), s.master_key)
+        if accepted is None:
+            raise HTTPException(403, "Review and accept the user agreement before signing in")
         allocation_lock(db)
         key = digest(body.username.lower())
         failure = db.get(LoginFailure, key)
@@ -178,6 +206,8 @@ def create_app(settings=None, provider=None):
         token, csrf = secrets.token_urlsafe(48), secrets.token_urlsafe(32)
         db.add(Login(token_hash=digest(token), user_id=user.id, csrf=csrf, expires=now + 8 * 3600))
         db.add(Audit(user_id=user.id, action="login"))
+        db.add(Audit(user_id=user.id, action="terms_accepted",
+                     target=f"{agreement.VERSION}:{accepted}"))
         db.commit()
         response.set_cookie("academy_session", token, httponly=True, secure=s.cookie_secure,
                             samesite="strict", max_age=8 * 3600, path="/")
