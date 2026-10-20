@@ -4,6 +4,8 @@ A training portal with accounts, course authoring, learner progress, server-grad
 
 The public website has separate Home (`/`), How training works (`/about`), and User agreement (`/terms`) pages. The sign-in form at `/login` contains the agreement checkbox. Direct `/labs`, `/classes`, `/sessions`, `/results`, `/account`, `/content`, and `/admin` requests require an authenticated session; the last two also require an administrator. Public pages answer `GET`, `HEAD`, and `OPTIONS` without granting cross-origin API access.
 
+The public pages, sign-in screen, and Academy workspace support light and dark appearances. The switch saves the learner's choice in the browser. The embedded lab terminal retains its own high-contrast color scheme in both modes.
+
 Use a separate Python 3.12 virtual environment. Install `backend/requirements.txt`, pytest 8.3.5 and PyYAML 6.0.2. Set `PYTHONPATH` to `backend` and `tests`, then run:
 
     python -m pytest tests/test_academy.py tests/test_proxmox.py tests/test_packaging.py tests/test_learning.py -q

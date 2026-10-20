@@ -3,13 +3,14 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Training Academy</title>
-  <link rel="stylesheet" href="/static/academy.css?v=20261020-pages-1">
+  <script src="/static/theme.js?v=20261020-theme-1"></script><link rel="stylesheet" href="/static/academy.css?v=20261020-pages-1">
   <link rel="stylesheet" href="/static/academy-mobile.css">
   <link rel="stylesheet" href="/static/public.css?v=20261020-pages-1">
   <script src="/static/terminal-focus.js?v=20261010-1" defer></script>
-<script src="/static/academy.js?v=20261020-pages-1" defer></script>
+<script src="/static/academy.js?v=20261020-theme-1" defer></script>
 <link rel="stylesheet" href="/static/learning.css?v=20261016-python-prompts-1">
 <script src="/static/learning.js?v=20261011-4" defer></script>
+<link rel="stylesheet" href="/static/visual-theme.css?v=20261020-theme-1">
 </head>
 <body>
 <div id="login-view" class="login-layout" hidden>
@@ -18,7 +19,7 @@
       <div class="login-topology"><span>CLIENT</span><i></i><span>ROUTER</span><i></i><span>SERVER</span></div></div>
     <p class="small">Training and lab services run in protected on-premises environments.</p>
   </section>
-  <section class="login-panel login-with-terms"><form id="login-form"><p class="eyebrow">WELCOME BACK</p><h2>Sign in to your academy</h2><p class="muted">Use the account provided by your training administrator.</p>
+  <section class="login-panel login-with-terms"><form id="login-form"><button class="theme-toggle login-toggle" type="button" data-theme-toggle>Dark mode</button><p class="eyebrow">WELCOME BACK</p><h2>Sign in to your academy</h2><p class="muted">Use the account provided by your training administrator.</p>
     <label for="username">Username</label><input id="username" name="username" autocomplete="username" required>
     <label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required>
     <div class="login-agreement"><h3>User agreement</h3><p class="small muted">Review before signing in. <a href="/terms">Open the full agreement on its own page</a>.</p><div class="terms-copy" tabindex="0" aria-label="User agreement">
@@ -34,10 +35,10 @@
 </div>
 <div id="app-view" class="app-layout" hidden>
   <aside class="sidebar"><a class="brand" href="/"><span class="brand-mark">A</span><span><strong>Training Academy</strong></span></a>
-    <p class="nav-label">YOUR WORKSPACE</p><nav aria-label="Main navigation"><a href="/classes" data-page="classes" class="nav">▤ <span>Class catalog</span></a><a href="/labs" data-page="catalog" class="nav active">▦ <span>Lab catalog</span></a><a href="/sessions" data-page="sessions" class="nav">▣ <span>My lab sessions</span><span id="seat-count" class="nav-count">0</span></a><a href="/results" data-page="results" class="nav">✓ <span>My results</span></a><a href="/content" data-page="content" class="nav admin-only" hidden>▧ <span>Content manager</span></a><a href="/admin" data-page="admin" class="nav admin-only" hidden>⚙ <span>Administration</span></a><a href="/account" data-page="account" class="nav">◉ <span>My account</span></a></nav>
+    <p class="nav-label">YOUR WORKSPACE</p><button class="theme-toggle" type="button" data-theme-toggle>Dark mode</button><nav aria-label="Main navigation"><a href="/classes" data-page="classes" class="nav"><svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M8 4v16M11 8h7M11 12h7"/></svg> <span>Class catalog</span></a><a href="/labs" data-page="catalog" class="nav active"><svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg> <span>Lab catalog</span></a><a href="/sessions" data-page="sessions" class="nav"><svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="15" rx="2"/><path d="m7 9 3 3-3 3M12 15h5M8 21h8"/></svg> <span>My lab sessions</span><span id="seat-count" class="nav-count">0</span></a><a href="/results" data-page="results" class="nav"><svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></svg> <span>My results</span></a><a href="/content" data-page="content" class="nav admin-only" hidden><svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg> <span>Content manager</span></a><a href="/admin" data-page="admin" class="nav admin-only" hidden><svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9 7 7M17 17l2.1 2.1M19.1 4.9 17 7M7 17l-2.1 2.1"/></svg> <span>Administration</span></a><a href="/account" data-page="account" class="nav"><svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg> <span>My account</span></a></nav>
     <div class="sidebar-bottom"><span class="online-dot"></span> Local academy<p>All training stays on premises.</p></div>
   </aside>
-  <div class="main"><header class="topbar"><div><span class="eyebrow">TRAINING / </span><span id="breadcrumb">Lab catalog</span></div><div class="user-menu"><span id="user-label"></span><button id="logout" class="text-button">Sign out</button></div></header>
+  <div class="main"><header class="topbar"><div><span class="eyebrow">TRAINING / </span><span id="breadcrumb">Lab catalog</span></div><div class="user-menu"><button class="theme-toggle" type="button" data-theme-toggle>Dark mode</button><span id="user-label"></span><button id="logout" class="text-button">Sign out</button></div></header>
     <main id="content" tabindex="-1"></main><div id="toast" role="status" aria-live="polite" hidden></div>
   </div>
 </div>
