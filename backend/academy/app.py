@@ -11,7 +11,7 @@ from typing import Literal
 from urllib.parse import urlencode
 import httpx
 from fastapi import FastAPI, Request, Response, HTTPException, Depends
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy import select, func
@@ -481,7 +481,29 @@ def create_app(settings=None, provider=None):
     if Path(s.static_dir).exists():
         app.mount("/static", StaticFiles(directory=s.static_dir), name="static")
 
-        @app.get("/")
-        def index():
-            return FileResponse(Path(s.static_dir) / "index.html")
+        public_pages = {"/": "home.html", "/about": "about.html", "/terms": "terms.html"}
+        protected_pages = {"/labs", "/classes", "/sessions", "/results",
+                           "/account", "/content", "/admin"}
+
+        @app.api_route("/{page:path}", methods=["GET", "HEAD", "OPTIONS"], include_in_schema=False)
+        def website(page: str, request: Request, db=Depends(get_db)):
+            path = "/" + page
+            if path not in public_pages and path not in protected_pages and path != "/login":
+                raise HTTPException(404, "Page not found")
+            if request.method == "OPTIONS":
+                return Response(status_code=200, headers={"Allow": "GET, HEAD, OPTIONS"})
+            if path in public_pages:
+                return FileResponse(Path(s.static_dir) / public_pages[path],
+                                    media_type="text/html")
+            if path == "/login":
+                return FileResponse(Path(s.static_dir) / "index.html", media_type="text/html")
+            token = request.cookies.get("academy_session", "")
+            login = db.get(Login, digest(token)) if token else None
+            user = db.get(User, login.user_id) if login else None
+            if not login or login.expires < time.time() or not user or not user.enabled:
+                return RedirectResponse("/login?" + urlencode({"next": path}),
+                                        status_code=303)
+            if path in {"/admin", "/content"} and user.role != "admin":
+                raise HTTPException(403, "Administrator access required")
+            return FileResponse(Path(s.static_dir) / "index.html", media_type="text/html")
     return app

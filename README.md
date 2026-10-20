@@ -2,6 +2,8 @@
 
 A training portal with accounts, course authoring, learner progress, server-graded exercises, manual written-response grading and isolated lab-session management through Proxmox and Guacamole. This copy includes platform source and generic authored Netlab tooling. It excludes actual course PDFs, real exam banks/answer keys, learner records, administrator secrets, site-specific configuration, operational reports and deployment media.
 
+The public website has separate Home (`/`), How training works (`/about`), and User agreement (`/terms`) pages. The sign-in form at `/login` contains the agreement checkbox. Direct `/labs`, `/classes`, `/sessions`, `/results`, `/account`, `/content`, and `/admin` requests require an authenticated session; the last two also require an administrator. Public pages answer `GET`, `HEAD`, and `OPTIONS` without granting cross-origin API access.
+
 Use a separate Python 3.12 virtual environment. Install `backend/requirements.txt`, pytest 8.3.5 and PyYAML 6.0.2. Set `PYTHONPATH` to `backend` and `tests`, then run:
 
     python -m pytest tests/test_academy.py tests/test_proxmox.py tests/test_packaging.py tests/test_learning.py -q

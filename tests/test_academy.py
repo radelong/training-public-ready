@@ -72,7 +72,9 @@ def user_client(system, name):
 def test_agreement_gates_sign_in_on_each_hostname(system):
     app, _, _, settings = system
     training = TestClient(app, base_url="https://academy.example.com")
-    assert 'id="splash-view"' in training.get("/").text
+    assert "Practice the work before the work depends on you" in training.get("/").text
+    assert "How training works" in training.get("/about").text
+    assert "Authorized use" in training.get("/terms").text
     status = training.get("/api/terms/status")
     assert status.json() == {"accepted": False, "version": agreement.VERSION}
     credentials = {"username": "admin", "password": settings.admin_password}
@@ -98,6 +100,31 @@ def test_agreement_gates_sign_in_on_each_hostname(system):
     assert other.post("/api/terms/accept", json={
         "agree": True, "version": agreement.VERSION}).status_code == 200
     assert other.post("/api/login", json=credentials).status_code == 200
+
+
+def test_public_pages_and_protected_routes(system):
+    app, admin, _, _ = system
+    visitor = TestClient(app, base_url="https://academy.example.com", follow_redirects=False)
+    for path in ("/", "/about", "/terms"):
+        assert visitor.get(path).status_code == 200
+        assert visitor.head(path).status_code == 200
+        options = visitor.options(path)
+        assert options.status_code == 200
+        assert "Access-Control-Allow-Origin" not in options.headers
+    assert visitor.get("/labs").headers["location"] == "/login?next=%2Flabs"
+    assert visitor.get("/classes").headers["location"] == "/login?next=%2Fclasses"
+    assert visitor.get("/login").status_code == 200
+    assert 'id="terms-agree"' in visitor.get("/login").text
+    assert visitor.get("/unknown").status_code == 404
+    accepted = accepted_client(app)
+    assert accepted.get("/labs", follow_redirects=False).headers["location"] == "/login?next=%2Flabs"
+    for path in ("/labs", "/classes", "/sessions", "/results", "/account", "/admin", "/content"):
+        response = admin.get(path)
+        assert response.status_code == 200
+        assert 'id="app-view"' in response.text
+    learner = user_client(system, "route-learner")
+    assert learner.get("/admin").status_code == 403
+    assert learner.get("/content").status_code == 403
 
 
 def test_agreement_cookie_expires_and_is_version_bound():
