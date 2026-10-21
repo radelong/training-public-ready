@@ -1,0 +1,21 @@
+.video-browser { display: grid; grid-template-columns: minmax(220px, 290px) minmax(0, 1fr); gap: 22px; align-items: start; }
+.video-filters { display: grid; gap: 18px; }
+.video-filter, .video-main { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 20px; box-shadow: var(--shadow); }
+.video-filter h2, .video-main h2 { font-size: 18px; margin-bottom: 14px; }
+.video-filter-list { display: grid; gap: 7px; }
+.video-filter-list button, .video-item { width: 100%; text-align: left; color: var(--ink); background: var(--surface-soft); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+.video-filter-list button:hover, .video-item:hover { border-color: var(--cyan); }
+.video-filter-list button.selected, .video-item.selected { border-color: var(--cyan); background: var(--cyanlight); box-shadow: inset 3px 0 var(--cyan); }
+.video-filter-list small { display: block; color: var(--muted); font-size: 12px; font-weight: normal; }
+.video-main { min-width: 0; }
+.video-player { width: 100%; aspect-ratio: 16 / 9; display: block; background: #07121f; border-radius: 10px; margin: 16px 0; }
+.video-meta { color: var(--muted); font-size: 14px; }
+.video-items { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 22px; }
+.video-item strong { display: block; overflow-wrap: anywhere; }
+.video-item span { display: block; color: var(--muted); font-size: 13px; font-weight: normal; margin-top: 4px; }
+.video-item .video-credit { font-weight: 700; color: var(--cyan); }
+.video-item .video-credit.complete { color: var(--green); }
+.video-credit-status { font-size: 14px; font-weight: 700; color: var(--cyan); margin: 0 0 8px; }
+.video-empty { padding: 35px; text-align: center; background: var(--surface-soft); border: 1px dashed var(--line); border-radius: 10px; }
+@media (max-width: 850px) { .video-browser { grid-template-columns: 1fr; } .video-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 540px) { .video-filters, .video-items { grid-template-columns: 1fr; } .video-filter, .video-main { padding: 16px; } }

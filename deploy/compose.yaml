@@ -10,6 +10,7 @@ x-academy: &academy
     - ./frontend:/app/frontend:ro
     - ./catalogue.json:/app/catalogue.json:ro
     - ./content:/var/lib/academy/content
+    - ${ACADEMY_VIDEO_HOST_PATH:-./videos}:/var/lib/academy/videos:ro
   networks: [services, management]
   read_only: true
   tmpfs: [/tmp]

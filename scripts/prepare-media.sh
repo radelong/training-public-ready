@@ -27,11 +27,11 @@ fi
 # Resolve package dependencies in the matching Ubuntu release. The resulting repository
 # contains full dependency closure; offline installation uses apt's solver with only file: sources.
 docker pull --platform linux/amd64 ubuntu:26.04
-if [[ ! -s "$root/assets/debs/Packages.gz" ]]; then
+if [[ ! -s "$root/assets/debs/Packages.gz" ]] || ! compgen -G "$root/assets/debs/cifs-utils_*_amd64.deb" >/dev/null; then
 docker run --rm --platform linux/amd64 -v "$root/assets/debs:/out" ubuntu:26.04 bash -euc '
   apt-get update
   apt-get install -y --no-install-recommends apt-rdepends dpkg-dev ca-certificates
-  packages="docker.io docker-compose-v2 openssl ca-certificates python3 qemu-guest-agent openssh-server cloud-init sudo
+  packages="docker.io docker-compose-v2 openssl ca-certificates python3 qemu-guest-agent openssh-server cloud-init sudo cifs-utils
     qemu-system-x86 libvirt-daemon-system libvirt-clients virtinst bridge-utils
     iproute2 iptables iputils-ping iputils-arping traceroute tcpdump curl wget dnsutils
     netcat-openbsd socat conntrack ethtool jq less bash-completion ipcalc mtr-tiny nftables procps"

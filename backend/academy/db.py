@@ -115,6 +115,21 @@ class Result(Base):
     created: Mapped[float] = mapped_column(Float, default=time.time)
 
 
+class VideoProgress(Base):
+    __tablename__ = "video_progress"
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    video_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    author: Mapped[str] = mapped_column(String(180))
+    topic: Mapped[str] = mapped_column(String(180))
+    title: Mapped[str] = mapped_column(String(255))
+    duration: Mapped[float] = mapped_column(Float)
+    watched_json: Mapped[str] = mapped_column(Text, default="[]")
+    last_position: Mapped[float] = mapped_column(Float, default=0)
+    last_seen: Mapped[float] = mapped_column(Float, default=0)
+    last_playing: Mapped[bool] = mapped_column(Boolean, default=False)
+    completed: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
 class Audit(Base):
     __tablename__ = "audit"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)

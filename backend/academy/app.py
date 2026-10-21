@@ -3,6 +3,7 @@ import csv
 import io
 import json
 import logging
+import math
 import re
 import secrets
 import time
@@ -18,9 +19,10 @@ from sqlalchemy import select, func
 from sqlalchemy.exc import IntegrityError
 from .config import Settings
 from .db import (database, allocation_lock, User, Login, LoginFailure, Lab, LabSession,
-                 Job, Result, Audit, Heartbeat, ConsoleGrant)
+                 Job, Result, VideoProgress, Audit, Heartbeat, ConsoleGrant)
 from .security import password_hash, password_ok, digest, decrypt_key, guac_data
 from . import agreement
+from .videos import catalogue as video_catalogue, add_watched_range, watched_seconds
 
 
 class Credentials(BaseModel):
@@ -64,6 +66,12 @@ class LabUpdate(BaseModel):
     enabled: bool
     cores: int = Field(ge=1, le=16)
     memory: int = Field(ge=1024, le=32768)
+
+
+class VideoPosition(BaseModel):
+    position: float = Field(ge=0, le=43202, allow_inf_nan=False)
+    playing: bool
+    ended: bool = False
 
 
 def create_app(settings=None, provider=None):
@@ -155,6 +163,81 @@ def create_app(settings=None, provider=None):
     def health(db=Depends(get_db)):
         db.execute(select(func.count(User.id)))
         return {"status": "ok", "database": "ready"}
+
+    @app.get("/api/videos")
+    def videos(auth=Depends(identity), db=Depends(get_db)):
+        items = video_catalogue(s.video_root)
+        progress = {row.video_id: row for row in db.scalars(select(VideoProgress).where(
+            VideoProgress.user_id == auth[0].id))}
+        return {"available": items is not None,
+                "videos": [{**item.public(),
+                            "completed_at": progress[item.id].completed if item.id in progress else None,
+                            "watched_percent": min(100, round(100 * watched_seconds(
+                                json.loads(progress[item.id].watched_json)) / progress[item.id].duration))
+                            if item.id in progress else 0} for item in (items or [])]}
+
+    @app.get("/api/videos/credits")
+    def video_credits(auth=Depends(identity), db=Depends(get_db)):
+        return [{"video_id": row.video_id, "author": row.author, "topic": row.topic,
+                 "title": row.title, "completed_at": row.completed} for row in db.scalars(
+                     select(VideoProgress).where(VideoProgress.user_id == auth[0].id,
+                                                 VideoProgress.completed.is_not(None)).order_by(
+                                                     VideoProgress.completed.desc()))]
+
+    @app.post("/api/videos/{video_id}/progress")
+    def video_progress(video_id: str, body: VideoPosition,
+                       auth=Depends(identity), db=Depends(get_db)):
+        items = video_catalogue(s.video_root)
+        if items is None:
+            raise HTTPException(503, "Video storage is unavailable")
+        item = next((video for video in items if video.id == video_id), None)
+        if item is None:
+            raise HTTPException(404, "Video not found")
+        duration = item.duration()
+        if duration is None:
+            raise HTTPException(422, "This video's duration could not be read; credit is unavailable")
+        if not math.isfinite(body.position) or body.position > duration + 2 or (
+                body.ended and body.position < duration - 2):
+            raise HTTPException(422, "Invalid playback position")
+        allocation_lock(db)
+        row = db.get(VideoProgress, (auth[0].id, video_id))
+        if row is None:
+            row = VideoProgress(user_id=auth[0].id, video_id=video_id,
+                                author=item.author[:180], topic=item.topic[:180],
+                                title=item.title[:255], duration=duration,
+                                watched_json="[]", last_position=0,
+                                last_seen=0, last_playing=False)
+            db.add(row)
+        if row.completed is not None:
+            return {"completed_at": row.completed, "watched_percent": 100}
+        now = time.time()
+        ranges = json.loads(row.watched_json)
+        elapsed = now - row.last_seen
+        advance = body.position - row.last_position
+        if (row.last_playing and 0 < elapsed <= 90 and 0 < advance <= elapsed * 2.25 + 1):
+            ranges = add_watched_range(ranges, row.last_position, min(body.position, duration))
+        row.watched_json = json.dumps(ranges)
+        row.last_position = body.position
+        row.last_seen = now
+        row.last_playing = body.playing and not body.ended
+        watched = min(duration, watched_seconds(ranges))
+        if body.ended and watched >= duration * 0.9:
+            row.completed = now
+            db.add(Audit(user_id=auth[0].id, action="video_completed", target=video_id))
+        db.commit()
+        return {"completed_at": row.completed,
+                "watched_percent": min(100, round(100 * watched / duration))}
+
+    @app.api_route("/api/videos/{video_id}/stream", methods=["GET", "HEAD"])
+    def video_stream(video_id: str, auth=Depends(identity)):
+        items = video_catalogue(s.video_root)
+        if items is None:
+            raise HTTPException(503, "Video storage is unavailable")
+        item = next((video for video in items if video.id == video_id), None)
+        if item is None:
+            raise HTTPException(404, "Video not found")
+        return FileResponse(item.path, media_type="video/mp4", filename=item.path.name,
+                            content_disposition_type="inline")
 
     @app.get("/api/terms/status")
     def terms_status(request: Request):
@@ -482,7 +565,7 @@ def create_app(settings=None, provider=None):
         app.mount("/static", StaticFiles(directory=s.static_dir), name="static")
 
         public_pages = {"/": "home.html", "/about": "about.html", "/terms": "terms.html"}
-        protected_pages = {"/labs", "/classes", "/sessions", "/results",
+        protected_pages = {"/labs", "/classes", "/videos", "/sessions", "/results",
                            "/account", "/content", "/admin"}
 
         @app.api_route("/{page:path}", methods=["GET", "HEAD", "OPTIONS"], include_in_schema=False)

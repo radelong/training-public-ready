@@ -2,6 +2,7 @@ import base64
 import hashlib
 import hmac
 import json
+import struct
 import time
 from pathlib import Path
 import pytest
@@ -125,6 +126,90 @@ def test_public_pages_and_protected_routes(system):
     learner = user_client(system, "route-learner")
     assert learner.get("/admin").status_code == 403
     assert learner.get("/content").status_code == 403
+
+
+def test_video_library_is_private_and_streams_byte_ranges(system, tmp_path):
+    app, admin, _, settings = system
+    settings.video_root = str(tmp_path / "videos")
+    author = Path(settings.video_root) / "Network Chuck"
+    topic = author / "Docker"
+    topic.mkdir(parents=True)
+    first = topic / "Learning Docker.mp4"
+    first.write_bytes(b"0123456789")
+    (topic / "notes.txt").write_text("Not a video")
+
+    visitor = TestClient(app, follow_redirects=False)
+    assert visitor.get("/videos").status_code == 303
+    assert visitor.get("/api/videos").status_code == 401
+    assert visitor.get("/api/videos/unknown/stream").status_code == 401
+    assert admin.get("/videos").status_code == 200
+
+    entries = admin.get("/api/videos").json()
+    assert entries["available"] is True
+    assert len(entries["videos"]) == 1
+    item = entries["videos"][0]
+    assert (item["author"], item["topic"], item["title"]) == (
+        "Network Chuck", "Docker", "Learning Docker")
+    stream = f"/api/videos/{item['id']}/stream"
+    response = admin.get(stream, headers={"Range": "bytes=2-5"})
+    assert response.status_code == 206
+    assert response.content == b"2345"
+    assert response.headers["content-range"] == "bytes 2-5/10"
+    assert response.headers["content-disposition"].startswith("inline")
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert admin.head(stream).status_code == 200
+    assert admin.get("/api/videos/not-a-video/stream").status_code == 404
+
+    (author / "Bash Scripting").mkdir()
+    (author / "Bash Scripting" / "Shell basics.mp4").write_bytes(b"video")
+    assert len(admin.get("/api/videos").json()["videos"]) == 2
+    settings.video_root = str(tmp_path / "offline")
+    assert admin.get("/api/videos").json() == {"available": False, "videos": []}
+    assert admin.get(stream).status_code == 503
+
+
+def test_video_credit_requires_watched_playback_and_is_per_user(system, tmp_path, monkeypatch):
+    app, admin, _, settings = system
+    settings.video_root = str(tmp_path / "videos")
+    folder = Path(settings.video_root) / "Creator" / "Topic"
+    folder.mkdir(parents=True)
+    payload = b"\0" * 12 + struct.pack(">II", 1000, 100000)
+    mvhd = struct.pack(">I4s", 8 + len(payload), b"mvhd") + payload
+    (folder / "Lesson.mp4").write_bytes(struct.pack(">I4s", 8 + len(mvhd), b"moov") + mvhd)
+    video_id = admin.get("/api/videos").json()["videos"][0]["id"]
+    path = f"/api/videos/{video_id}/progress"
+    visitor = TestClient(app)
+    assert visitor.post(path, json={"position": 0, "playing": True}).status_code == 401
+    other = user_client(system, "video-learner")
+    clock = [time.time()]
+    monkeypatch.setattr("academy.app.time.time", lambda: clock[0])
+
+    assert admin.post(path, json={"position": 0, "playing": True}).status_code == 200
+    clock[0] += 1
+    assert admin.post(path, json={"position": 99, "playing": True}).json()["watched_percent"] == 0
+    clock[0] += 1
+    bypass = admin.post(path, json={"position": 100, "playing": False, "ended": True}).json()
+    assert bypass["completed_at"] is None
+    assert admin.get("/api/videos/credits").json() == []
+
+    assert other.post(path, json={"position": 0, "playing": True}).status_code == 200
+    for position in range(10, 101, 10):
+        clock[0] += 5
+        result = other.post(path, json={"position": position, "playing": position < 100,
+                                        "ended": position == 100})
+        assert result.status_code == 200, result.text
+    assert result.json()["completed_at"] is not None
+    assert result.json()["watched_percent"] == 100
+    assert len(other.get("/api/videos/credits").json()) == 1
+    assert admin.get("/api/videos/credits").json() == []
+    assert other.get("/api/videos").json()["videos"][0]["completed_at"] is not None
+    assert admin.get("/api/videos").json()["videos"][0]["completed_at"] is None
+
+    old_id = video_id
+    (folder / "Lesson.mp4").write_bytes((folder / "Lesson.mp4").read_bytes() + b"changed")
+    assert other.get("/api/videos").json()["videos"][0]["id"] != old_id
+    assert other.get("/api/videos").json()["videos"][0]["completed_at"] is None
 
 
 def test_agreement_cookie_expires_and_is_version_bound():

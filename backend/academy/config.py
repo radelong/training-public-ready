@@ -30,6 +30,7 @@ class Settings:
     static_dir: str = os.getenv("STATIC_DIR", "/app/frontend")
     catalogue: str = os.getenv("CATALOGUE_PATH", "/app/catalogue.json")
     content_dir: str = os.getenv("CONTENT_DIR", "/var/lib/academy/content")
+    video_root: str = os.getenv("VIDEO_ROOT", "/var/lib/academy/videos")
 
     def validate(self):
         if len(bytes.fromhex(self.master_key)) != 32:

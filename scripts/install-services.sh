@@ -8,14 +8,11 @@ test "$ID" = ubuntu && test "$VERSION_ID" = 26.04 || { echo 'Ubuntu 26.04 amd64 
 test "$(dpkg --print-architecture)" = amd64
 python3 "$media/scripts/verify-media.py" "$media"
 python3 "$media/scripts/validate-site.py" "$config"
-bash "$media/scripts/offline-apt.sh" "$media" docker.io docker-compose-v2 openssl ca-certificates python3 qemu-guest-agent
+bash "$media/scripts/offline-apt.sh" "$media" docker.io docker-compose-v2 openssl ca-certificates python3 qemu-guest-agent cifs-utils
 systemctl start qemu-guest-agent
 systemctl enable --now docker
 install -d -m 750 /opt/training-academy
 install -d -o 10001 -g 10001 -m 750 /opt/training-academy/content
-if [ ! -e /opt/training-academy ]; then
-  ln -s /opt/training-academy /opt/training-academy
-fi
 if [ -e /opt/training-academy/.env ]; then
   echo 'Existing installation detected; use the documented upgrade procedure.' >&2; exit 1
 fi
