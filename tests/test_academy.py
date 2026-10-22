@@ -114,7 +114,7 @@ def test_bug_reports_are_bound_to_signed_in_user_and_admin_only(system):
     learner = user_client(system, "reporting-learner")
     page = learner.get("/labs")
     assert page.status_code == 200
-    assert '/static/academy.js?v=20261022-game-progress-2' in page.text
+    assert '/static/academy.js?v=20261022-game-player-1' in page.text
     assert 'href="/bug-report"' in page.text
     assert 'href="/admin/bug-reports"' in page.text
     assert learner.get("/bug-report").status_code == 200
@@ -183,7 +183,7 @@ def test_learning_games_are_admin_uploaded_authenticated_and_sandboxed(system):
     workspace = learner.get("/games")
     assert workspace.status_code == 200
     assert 'href="/games" data-page="games"' in workspace.text
-    assert 'academy.js?v=20261022-game-progress-2' in workspace.text
+    assert 'academy.js?v=20261022-game-player-1' in workspace.text
     assert 'learning.js?v=20261022-learning-games-1' in workspace.text
     assert admin.get("/content").status_code == 200
     html = b"<!doctype html><html><head><meta charset='utf-8'><title>Quiz</title></head><body><script>document.body.textContent='Ready';</script></body></html>"
@@ -194,6 +194,8 @@ def test_learning_games_are_admin_uploaded_authenticated_and_sandboxed(system):
     assert denied.status_code == 403
     uploaded = admin.post("/api/admin/games", content=html, headers=headers)
     assert uploaded.status_code == 200, uploaded.text
+
+
     game_id = uploaded.json()["id"]
     assert visitor.get(f"/api/games/{game_id}/play").status_code == 401
     progress_path = f"/api/games/{game_id}/progress"
@@ -242,6 +244,15 @@ def test_learning_games_are_admin_uploaded_authenticated_and_sandboxed(system):
                             headers={**headers, "Content-Type": "application/zip"})
     assert wrong_type.status_code == 415
 
+
+
+def test_open_learning_game_uses_expanded_player_view():
+    js = (ROOT / "frontend" / "academy.js").read_text(encoding="utf-8")
+    css = (ROOT / "frontend" / "academy.css").read_text(encoding="utf-8")
+    assert 'content.classList.toggle("game-active",Boolean(game))' in js
+    assert ".game-active .game-grid{display:none}" in css
+    assert "height:calc(100dvh - 330px)" in css
+    assert "height:calc(100dvh - 420px)" in css
 
 
 def test_video_library_is_private_and_streams_byte_ranges(system, tmp_path):

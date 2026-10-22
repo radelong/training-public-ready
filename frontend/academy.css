@@ -6,3 +6,15 @@
 @media(max-width:800px){.terms-panel{padding:30px 25px}.terms-copy{max-height:38vh;padding:18px}.splash-intro{min-height:270px}}
 
 .game-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:20px;margin-top:24px}.game-card{display:flex;flex-direction:column;min-height:245px}.game-card h2{font-size:21px;margin-bottom:8px}.game-card>p:not(.eyebrow){color:var(--muted)}.game-card .primary{margin-top:auto;align-self:flex-start}.game-card-mark{display:grid;place-items:center;width:46px;height:46px;border-radius:12px;background:var(--cyanlight);color:var(--cyan);font-size:25px;margin-bottom:16px}.game-player{margin-bottom:24px}.game-player-heading{display:flex;justify-content:space-between;gap:18px;align-items:flex-start;margin-bottom:16px}.game-player-heading h2{margin-bottom:6px}.game-player-heading p{margin-bottom:4px}.game-player-frame{display:block;width:100%;height:min(72vh,760px);min-height:480px;border:1px solid var(--line);border-radius:8px;background:white}.game-player>.small{margin:12px 0 0}.game-upload-panel{margin:24px 0}.game-upload-panel>p{max-width:900px}.game-upload-panel .learning-form{max-width:960px}.game-upload-panel textarea{width:100%;padding:11px 13px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--ink);font:inherit}.game-admin-list{display:grid;gap:10px;margin-bottom:10px}.game-admin-row{padding:13px 16px;border:1px solid var(--line);border-radius:6px}.game-admin-row p{margin:4px 0 0}@media(max-width:650px){.game-player-heading{display:block}.game-player-heading button{margin-top:10px}.game-player-frame{height:65vh;min-height:400px}}\n
+.game-active{max-width:none!important;padding:12px 20px 16px!important}
+.game-active>.page-heading{display:none}
+.game-active .game-grid{display:none}
+.game-active .game-player{display:flex;flex-direction:column;min-height:calc(100dvh - 92px);margin:0}
+.game-active .game-player-heading{flex:0 0 auto;margin-bottom:10px}
+.game-active .game-player-frame{flex:1 1 auto;height:calc(100dvh - 330px);min-height:400px;max-height:none}
+.game-active .game-player>.small{flex:0 0 auto;margin:8px 0 0}
+@media(max-width:800px){
+  .game-active{padding:10px 12px 12px!important}
+  .game-active .game-player{min-height:calc(100dvh - 170px)}
+  .game-active .game-player-frame{height:calc(100dvh - 420px);min-height:400px}
+}
