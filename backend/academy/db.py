@@ -151,6 +151,19 @@ class BugReport(Base):
     __table_args__ = (Index("bug_reports_created", "created"),)
 
 
+class LearningGame(Base):
+    __tablename__ = "learning_games"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    title: Mapped[str] = mapped_column(String(120))
+    description: Mapped[str] = mapped_column(Text, default="")
+    category: Mapped[str] = mapped_column(String(24), default="General")
+    filename: Mapped[str] = mapped_column(String(180))
+    size: Mapped[int] = mapped_column(Integer)
+    sha256: Mapped[str] = mapped_column(String(64))
+    created_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    created: Mapped[float] = mapped_column(Float, default=time.time)
+
+
 class Heartbeat(Base):
     __tablename__ = "heartbeat"
     id: Mapped[str] = mapped_column(String(16), primary_key=True)

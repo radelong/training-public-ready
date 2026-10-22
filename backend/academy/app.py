@@ -1,5 +1,6 @@
 import base64
 import csv
+import hashlib
 import io
 import json
 import logging
@@ -7,9 +8,10 @@ import math
 import re
 import secrets
 import time
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Literal
-from urllib.parse import urlencode
+from urllib.parse import urlencode, unquote
 import httpx
 from fastapi import FastAPI, Request, Response, HTTPException, Depends
 from fastapi.responses import FileResponse, RedirectResponse
@@ -20,10 +22,20 @@ from sqlalchemy.exc import IntegrityError
 from .config import Settings
 from .db import (database, allocation_lock, User, Login, LoginFailure, Lab, LabSession,
                  Job, Result, VideoProgress, Audit, Heartbeat, ConsoleGrant)
-from .db import BugReport
+from .db import BugReport, LearningGame
 from .security import password_hash, password_ok, digest, decrypt_key, guac_data
 from . import agreement
 from .videos import catalogue as video_catalogue, add_watched_range, watched_seconds
+
+
+class HtmlDocument(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.has_html = False
+
+    def handle_starttag(self, tag, attrs):
+        if tag.casefold() == "html":
+            self.has_html = True
 
 
 class Credentials(BaseModel):
@@ -119,11 +131,18 @@ def create_app(settings=None, provider=None):
         response.headers["X-Frame-Options"] = "SAMEORIGIN"
         # Guacamole's Angular client compiles templates at runtime. Limit its
         # required unsafe-eval exception to the authenticated console path.
-        script_src = "'self' 'unsafe-eval'" if request.url.path.startswith("/console/") else "'self'"
-        response.headers["Content-Security-Policy"] = (
-            f"default-src 'self'; script-src {script_src}; style-src 'self' 'unsafe-inline'; "
-            "img-src 'self' data:; font-src 'self'; connect-src 'self' ws: wss:; "
-            "frame-src 'self'; frame-ancestors 'self'; object-src 'none'; base-uri 'self'")
+        if re.fullmatch(r"/api/games/[a-f0-9]{32}/play", request.url.path):
+            response.headers["Content-Security-Policy"] = (
+                "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; "
+                "style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; "
+                "font-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'; "
+                "frame-ancestors 'self'")
+        else:
+            script_src = "'self' 'unsafe-eval'" if request.url.path.startswith("/console/") else "'self'"
+            response.headers["Content-Security-Policy"] = (
+                f"default-src 'self'; script-src {script_src}; style-src 'self' 'unsafe-inline'; "
+                "img-src 'self' data:; font-src 'self'; connect-src 'self' ws: wss:; "
+                "frame-src 'self'; frame-ancestors 'self'; object-src 'none'; base-uri 'self'")
         if request.url.path.startswith("/console/") and response.status_code >= 400:
             section = request.url.path.split("/")[2]
             logging.getLogger("academy.console").warning(
@@ -187,6 +206,91 @@ def create_app(settings=None, provider=None):
         db.commit()
         return {"id": report.id, "created": report.created,
                 "message": "Your report was sent to the training administrator"}
+
+    @app.get("/api/games")
+    def learning_games(auth=Depends(identity), db=Depends(get_db)):
+        return [{"id": game.id, "title": game.title, "description": game.description,
+                 "category": game.category, "size": game.size, "created": game.created}
+                for game in db.scalars(select(LearningGame).order_by(
+                    LearningGame.category, LearningGame.title))]
+
+    @app.get("/api/admin/games")
+    def admin_learning_games(auth=Depends(administrator), db=Depends(get_db)):
+        return [{"id": game.id, "title": game.title, "description": game.description,
+                 "category": game.category, "filename": game.filename, "size": game.size,
+                 "sha256": game.sha256, "created": game.created}
+                for game in db.scalars(select(LearningGame).order_by(LearningGame.created.desc()))]
+
+    @app.post("/api/admin/games")
+    async def upload_learning_game(request: Request, auth=Depends(administrator), db=Depends(get_db)):
+        if request.headers.get("content-type", "").split(";")[0].casefold() != "text/html":
+            raise HTTPException(415, "Upload a self-contained HTML game file")
+        title = unquote(request.headers.get("X-Game-Title", "")).strip()
+        description = unquote(request.headers.get("X-Game-Description", "")).strip()
+        category = unquote(request.headers.get("X-Game-Category", "General")).strip()
+        filename = re.sub(r"[\x00-\x1f\x7f/\\]", "_", unquote(
+            request.headers.get("X-File-Name", "learning-game.html")))[:180]
+        if not title or len(title) > 120:
+            raise HTTPException(422, "Enter a game title of 1 to 120 characters")
+        if len(description) > 2000:
+            raise HTTPException(422, "Game description must be 2,000 characters or fewer")
+        if category not in {"Networking", "Linux", "Security", "Kubernetes", "Cloud", "General"}:
+            raise HTTPException(422, "Select a supported game category")
+        if Path(filename).suffix.casefold() not in {".html", ".htm"}:
+            raise HTTPException(415, "The uploaded file must use .html or .htm")
+        payload = bytearray()
+        async for chunk in request.stream():
+            payload.extend(chunk)
+            if len(payload) > 5 * 1024 * 1024:
+                raise HTTPException(413, "HTML game files must be 5 MB or smaller")
+        if not payload:
+            raise HTTPException(422, "The uploaded HTML file is empty")
+        try:
+            document = bytes(payload).decode("utf-8-sig")
+            parser = HtmlDocument()
+            parser.feed(document)
+            parser.close()
+        except (UnicodeDecodeError, ValueError) as exc:
+            raise HTTPException(415, "The game must be a valid UTF-8 HTML document") from exc
+        if not parser.has_html:
+            raise HTTPException(415, "The uploaded file must contain an HTML document")
+        game_id = secrets.token_hex(16)
+        folder = Path(s.content_dir) / "games"
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / f"{game_id}.html"
+        try:
+            with path.open("xb") as output:
+                output.write(payload)
+            game = LearningGame(id=game_id, title=title, description=description,
+                                category=category, filename=filename, size=len(payload),
+                                sha256=hashlib.sha256(payload).hexdigest(),
+                                created_by=auth[0].id)
+            db.add(game)
+            db.add(Audit(user_id=auth[0].id, action="upload_learning_game", target=game_id))
+            db.commit()
+        except BaseException:
+            path.unlink(missing_ok=True)
+            raise
+        return {"id": game.id, "title": game.title,
+                "message": "Game added to the Learning Games catalog"}
+
+    @app.get("/api/games/{game_id}/play")
+    def play_learning_game(game_id: str, auth=Depends(identity), db=Depends(get_db)):
+        game = db.get(LearningGame, game_id)
+        if not game:
+            raise HTTPException(404, "Learning game not found")
+        path = Path(s.content_dir) / "games" / f"{game.id}.html"
+        if not path.is_file():
+            raise HTTPException(404, "Learning game file is missing; contact your administrator")
+        policy = ("sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; "
+                  "style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; "
+                  "font-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'; "
+                  "frame-ancestors 'self'")
+        return FileResponse(path, media_type="text/html", filename=game.filename,
+                            content_disposition_type="inline",
+                            headers={"Content-Security-Policy": policy,
+                                     "Referrer-Policy": "no-referrer",
+                                     "Cache-Control": "no-store"})
 
     @app.get("/api/videos")
     def videos(auth=Depends(identity), db=Depends(get_db)):
@@ -613,7 +717,7 @@ def create_app(settings=None, provider=None):
         app.mount("/static", StaticFiles(directory=s.static_dir), name="static")
 
         public_pages = {"/": "home.html", "/about": "about.html", "/terms": "terms.html"}
-        protected_pages = {"/labs", "/classes", "/videos", "/sessions", "/results",
+        protected_pages = {"/labs", "/classes", "/videos", "/games", "/sessions", "/results",
                            "/account", "/content", "/admin", "/bug-report",
                            "/admin/bug-reports"}
 

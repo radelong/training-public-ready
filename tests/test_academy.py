@@ -114,7 +114,7 @@ def test_bug_reports_are_bound_to_signed_in_user_and_admin_only(system):
     learner = user_client(system, "reporting-learner")
     page = learner.get("/labs")
     assert page.status_code == 200
-    assert '/static/academy.js?v=20261022-bug-reports-1' in page.text
+    assert '/static/academy.js?v=20261022-learning-games-1' in page.text
     assert 'href="/bug-report"' in page.text
     assert 'href="/admin/bug-reports"' in page.text
     assert learner.get("/bug-report").status_code == 200
@@ -169,6 +169,62 @@ def test_public_pages_and_protected_routes(system):
     learner = user_client(system, "route-learner")
     assert learner.get("/admin").status_code == 403
     assert learner.get("/content").status_code == 403
+
+
+def test_learning_games_are_admin_uploaded_authenticated_and_sandboxed(system):
+    app, admin, _, settings = system
+    visitor = TestClient(app, follow_redirects=False)
+    assert visitor.get("/games").status_code == 303
+    assert visitor.get("/api/games").status_code == 401
+    assert visitor.post("/api/admin/games", content="<html></html>",
+                        headers={"Content-Type": "text/html"}).status_code == 401
+
+    learner = user_client(system, "game-learner")
+    workspace = learner.get("/games")
+    assert workspace.status_code == 200
+    assert 'href="/games" data-page="games"' in workspace.text
+    assert 'academy.js?v=20261022-learning-games-1' in workspace.text
+    assert 'learning.js?v=20261022-learning-games-1' in workspace.text
+    assert admin.get("/content").status_code == 200
+    html = b"<!doctype html><html><head><meta charset='utf-8'><title>Quiz</title></head><body><script>document.body.textContent='Ready';</script></body></html>"
+    headers = {"Content-Type": "text/html", "X-Game-Title": "Offline Quiz",
+               "X-Game-Description": "A short test", "X-Game-Category": "Linux",
+               "X-File-Name": "quiz.html"}
+    denied = learner.post("/api/admin/games", content=html, headers=headers)
+    assert denied.status_code == 403
+    uploaded = admin.post("/api/admin/games", content=html, headers=headers)
+    assert uploaded.status_code == 200, uploaded.text
+    game_id = uploaded.json()["id"]
+    assert visitor.get(f"/api/games/{game_id}/play").status_code == 401
+
+    catalog = learner.get("/api/games")
+    assert catalog.status_code == 200
+    assert catalog.json() == [{"id": game_id, "title": "Offline Quiz",
+                               "description": "A short test", "category": "Linux",
+                               "size": len(html), "created": catalog.json()[0]["created"]}]
+    assert "sha256" not in catalog.json()[0]
+    assert learner.get("/api/admin/games").status_code == 403
+
+    game = learner.get(f"/api/games/{game_id}/play")
+    assert game.status_code == 200
+    assert game.content == html
+    assert game.headers["content-type"].startswith("text/html")
+    assert "sandbox allow-scripts" in game.headers["content-security-policy"]
+    assert "connect-src 'none'" in game.headers["content-security-policy"]
+    assert game.headers["x-frame-options"] == "SAMEORIGIN"
+    assert "inline" in game.headers["content-disposition"]
+    assert (Path(settings.content_dir) / "games" / f"{game_id}.html").read_bytes() == html
+
+    invalid = admin.post("/api/admin/games", content=b"not a page",
+                         headers={**headers, "X-File-Name": "bad.html"})
+    assert invalid.status_code == 415
+    oversized = admin.post("/api/admin/games", content=b"x" * (5 * 1024 * 1024 + 1),
+                           headers=headers)
+    assert oversized.status_code == 413
+    wrong_type = admin.post("/api/admin/games", content=html,
+                            headers={**headers, "Content-Type": "application/zip"})
+    assert wrong_type.status_code == 415
+
 
 
 def test_video_library_is_private_and_streams_byte_ranges(system, tmp_path):
