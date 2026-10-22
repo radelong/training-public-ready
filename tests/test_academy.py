@@ -13,6 +13,7 @@ from sqlalchemy import select
 from academy.app import create_app
 from academy.config import Settings
 from academy.db import Lab, LabSession, Job, Result, ConsoleGrant, HttpTunnel, User
+from academy.db import BugReport
 from academy.worker import execute_job, tick
 from academy.security import guac_data, encrypt_key, decrypt_key, digest
 from academy.console_proxy import authorize
@@ -101,6 +102,43 @@ def test_agreement_gates_sign_in_on_each_hostname(system):
     assert other.post("/api/terms/accept", json={
         "agree": True, "version": agreement.VERSION}).status_code == 200
     assert other.post("/api/login", json=credentials).status_code == 200
+
+
+def test_bug_reports_are_bound_to_signed_in_user_and_admin_only(system):
+    app, admin, _, _ = system
+    visitor = TestClient(app, follow_redirects=False)
+    assert visitor.post("/api/bug-reports", json={"message": "Something went wrong here"}).status_code == 401
+    assert visitor.get("/api/admin/bug-reports").status_code == 401
+    assert visitor.get("/bug-report").status_code == 303
+
+    learner = user_client(system, "reporting-learner")
+    assert learner.get("/bug-report").status_code == 200
+    assert learner.get("/admin/bug-reports").status_code == 403
+    assert learner.get("/api/admin/bug-reports").status_code == 403
+
+    sent = learner.post("/api/bug-reports", json={
+        "username": "forged-admin", "message": "  The lab page froze after I selected Start.  "})
+    assert sent.status_code == 200, sent.text
+    assert sent.json()["message"] == "Your report was sent to the training administrator"
+    reports = admin.get("/api/admin/bug-reports")
+    assert reports.status_code == 200
+    [report] = reports.json()
+    assert report["username"] == "reporting-learner"
+    assert report["message"] == "The lab page froze after I selected Start."
+    assert report["read_at"] is None
+    assert admin.get("/api/admin/bug-reports/unread-count").json() == {"count": 1}
+
+    assert learner.put(f"/api/admin/bug-reports/{report['id']}/read", json={}).status_code == 403
+    marked = admin.put(f"/api/admin/bug-reports/{report['id']}/read", json={})
+    assert marked.status_code == 200
+    assert marked.json()["read_at"] is not None
+    assert admin.get("/api/admin/bug-reports/unread-count").json() == {"count": 0}
+    assert admin.put("/api/admin/bug-reports/not-a-report/read", json={}).status_code == 404
+    assert learner.post("/api/bug-reports", json={"message": "          "}).status_code == 422
+    with app.state.factory() as db:
+        [stored] = db.query(BugReport).all()
+        assert stored.user_id != db.query(User).filter_by(username="admin").one().id
+        assert stored.read_by == db.query(User).filter_by(username="admin").one().id
 
 
 def test_public_pages_and_protected_routes(system):

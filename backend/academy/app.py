@@ -14,12 +14,13 @@ import httpx
 from fastapi import FastAPI, Request, Response, HTTPException, Depends
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select, func
 from sqlalchemy.exc import IntegrityError
 from .config import Settings
 from .db import (database, allocation_lock, User, Login, LoginFailure, Lab, LabSession,
                  Job, Result, VideoProgress, Audit, Heartbeat, ConsoleGrant)
+from .db import BugReport
 from .security import password_hash, password_ok, digest, decrypt_key, guac_data
 from . import agreement
 from .videos import catalogue as video_catalogue, add_watched_range, watched_seconds
@@ -72,6 +73,18 @@ class VideoPosition(BaseModel):
     position: float = Field(ge=0, le=43202, allow_inf_nan=False)
     playing: bool
     ended: bool = False
+
+
+class BugReportSubmission(BaseModel):
+    message: str = Field(min_length=10, max_length=5000)
+
+    @field_validator("message")
+    @classmethod
+    def trim_message(cls, value):
+        value = value.strip()
+        if len(value) < 10:
+            raise ValueError("Describe the issue in at least 10 characters")
+        return value
 
 
 def create_app(settings=None, provider=None):
@@ -163,6 +176,17 @@ def create_app(settings=None, provider=None):
     def health(db=Depends(get_db)):
         db.execute(select(func.count(User.id)))
         return {"status": "ok", "database": "ready"}
+
+    @app.post("/api/bug-reports")
+    def submit_bug_report(body: BugReportSubmission, auth=Depends(identity), db=Depends(get_db)):
+        report = BugReport(user_id=auth[0].id, username=auth[0].username,
+                           message=body.message)
+        db.add(report)
+        db.flush()
+        db.add(Audit(user_id=auth[0].id, action="submit_bug_report", target=report.id))
+        db.commit()
+        return {"id": report.id, "created": report.created,
+                "message": "Your report was sent to the training administrator"}
 
     @app.get("/api/videos")
     def videos(auth=Depends(identity), db=Depends(get_db)):
@@ -457,6 +481,30 @@ def create_app(settings=None, provider=None):
                 "users": [{"id": u.id, "username": u.username, "role": u.role, "enabled": u.enabled}
                           for u in db.scalars(select(User).order_by(User.username))]}
 
+    @app.get("/api/admin/bug-reports")
+    def admin_bug_reports(auth=Depends(administrator), db=Depends(get_db)):
+        reports = db.scalars(select(BugReport).order_by(BugReport.created.desc())).all()
+        return [{"id": report.id, "username": report.username,
+                 "message": report.message, "created": report.created,
+                 "read_at": report.read_at} for report in reports]
+
+    @app.get("/api/admin/bug-reports/unread-count")
+    def unread_bug_report_count(auth=Depends(administrator), db=Depends(get_db)):
+        count = db.scalar(select(func.count(BugReport.id)).where(BugReport.read_at.is_(None)))
+        return {"count": count or 0}
+
+    @app.put("/api/admin/bug-reports/{report_id}/read")
+    def mark_bug_report_read(report_id: str, auth=Depends(administrator), db=Depends(get_db)):
+        report = db.get(BugReport, report_id)
+        if not report:
+            raise HTTPException(404, "Bug report not found")
+        if report.read_at is None:
+            report.read_at = time.time()
+            report.read_by = auth[0].id
+            db.add(Audit(user_id=auth[0].id, action="read_bug_report", target=report.id))
+            db.commit()
+        return {"id": report.id, "read_at": report.read_at}
+
     @app.post("/api/admin/users")
     def add_user(body: NewUser, auth=Depends(administrator), db=Depends(get_db)):
         if not re.fullmatch(r"[A-Za-z0-9_.-]{3,64}", body.username) or len(body.password) < 12 or body.role not in ("learner", "admin"):
@@ -566,7 +614,8 @@ def create_app(settings=None, provider=None):
 
         public_pages = {"/": "home.html", "/about": "about.html", "/terms": "terms.html"}
         protected_pages = {"/labs", "/classes", "/videos", "/sessions", "/results",
-                           "/account", "/content", "/admin"}
+                           "/account", "/content", "/admin", "/bug-report",
+                           "/admin/bug-reports"}
 
         @app.api_route("/{page:path}", methods=["GET", "HEAD", "OPTIONS"], include_in_schema=False)
         def website(page: str, request: Request, db=Depends(get_db)):
@@ -586,7 +635,7 @@ def create_app(settings=None, provider=None):
             if not login or login.expires < time.time() or not user or not user.enabled:
                 return RedirectResponse("/login?" + urlencode({"next": path}),
                                         status_code=303)
-            if path in {"/admin", "/content"} and user.role != "admin":
+            if path in {"/admin", "/content", "/admin/bug-reports"} and user.role != "admin":
                 raise HTTPException(403, "Administrator access required")
             return FileResponse(Path(s.static_dir) / "index.html", media_type="text/html")
     return app

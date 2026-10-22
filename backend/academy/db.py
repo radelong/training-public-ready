@@ -139,6 +139,18 @@ class Audit(Base):
     created: Mapped[float] = mapped_column(Float, default=time.time)
 
 
+class BugReport(Base):
+    __tablename__ = "bug_reports"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    username: Mapped[str] = mapped_column(String(64))
+    message: Mapped[str] = mapped_column(Text)
+    created: Mapped[float] = mapped_column(Float, default=time.time)
+    read_at: Mapped[float | None] = mapped_column(Float, nullable=True)
+    read_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    __table_args__ = (Index("bug_reports_created", "created"),)
+
+
 class Heartbeat(Base):
     __tablename__ = "heartbeat"
     id: Mapped[str] = mapped_column(String(16), primary_key=True)

@@ -1,0 +1,15 @@
+
+.bug-report-form-panel{max-width:760px;padding:28px}
+.bug-report-form-panel h2{margin-bottom:8px}
+.bug-report-form-panel input[readonly]{background:var(--surface-soft,#f3f6f8);color:var(--muted)}
+.bug-report-form-panel textarea{display:block;width:100%;min-height:190px;padding:12px 14px;border:1px solid var(--line);border-radius:7px;background:var(--surface,#fff);color:var(--ink);font:inherit;resize:vertical}
+.bug-report-form-panel textarea:focus-visible{outline:3px solid #36b6ca;outline-offset:2px}
+.bug-report-form-panel button{margin-top:8px}
+.bug-report-list{display:grid;gap:16px}
+.bug-report-card{padding:22px}
+.bug-report-meta{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}
+.bug-report-meta h2{font-size:18px;margin:0 0 3px}
+.bug-report-meta p{margin:0}
+.bug-report-message{white-space:pre-wrap;overflow-wrap:anywhere;margin:18px 0 0}
+.bug-report-card button{margin-top:18px}
+:root[data-theme="dark"] .bug-report-form-panel input[readonly]{background:var(--surface-soft);color:var(--muted)}
