@@ -164,6 +164,14 @@ class LearningGame(Base):
     created: Mapped[float] = mapped_column(Float, default=time.time)
 
 
+class LearningGameProgress(Base):
+    __tablename__ = "learning_game_progress"
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    game_id: Mapped[str] = mapped_column(ForeignKey("learning_games.id"), primary_key=True)
+    state_json: Mapped[str] = mapped_column(Text)
+    updated: Mapped[float] = mapped_column(Float, default=time.time)
+
+
 class Heartbeat(Base):
     __tablename__ = "heartbeat"
     id: Mapped[str] = mapped_column(String(16), primary_key=True)

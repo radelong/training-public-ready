@@ -22,7 +22,7 @@ from sqlalchemy.exc import IntegrityError
 from .config import Settings
 from .db import (database, allocation_lock, User, Login, LoginFailure, Lab, LabSession,
                  Job, Result, VideoProgress, Audit, Heartbeat, ConsoleGrant)
-from .db import BugReport, LearningGame
+from .db import BugReport, LearningGame, LearningGameProgress
 from .security import password_hash, password_ok, digest, decrypt_key, guac_data
 from . import agreement
 from .videos import catalogue as video_catalogue, add_watched_range, watched_seconds
@@ -85,6 +85,10 @@ class VideoPosition(BaseModel):
     position: float = Field(ge=0, le=43202, allow_inf_nan=False)
     playing: bool
     ended: bool = False
+
+
+class GameProgressState(BaseModel):
+    state: str = Field(min_length=2, max_length=131072)
 
 
 class BugReportSubmission(BaseModel):
@@ -291,6 +295,47 @@ def create_app(settings=None, provider=None):
                             headers={"Content-Security-Policy": policy,
                                      "Referrer-Policy": "no-referrer",
                                      "Cache-Control": "no-store"})
+
+    @app.get("/api/games/{game_id}/progress")
+    def learning_game_progress(game_id: str, auth=Depends(identity), db=Depends(get_db)):
+        if not db.get(LearningGame, game_id):
+            raise HTTPException(404, "Learning game not found")
+        progress = db.get(LearningGameProgress, (auth[0].id, game_id))
+        return {"state": progress.state_json if progress else None,
+                "updated": progress.updated if progress else None}
+
+    @app.put("/api/games/{game_id}/progress")
+    def save_learning_game_progress(game_id: str, body: GameProgressState,
+                                    auth=Depends(identity), db=Depends(get_db)):
+        if not db.get(LearningGame, game_id):
+            raise HTTPException(404, "Learning game not found")
+        try:
+            if len(body.state.encode("utf-8")) > 131072:
+                raise HTTPException(413, "Saved game progress must be 128 KiB or smaller")
+            decoded = json.loads(body.state)
+        except (UnicodeEncodeError, json.JSONDecodeError, RecursionError) as exc:
+            raise HTTPException(422, "Saved game progress must be a JSON object") from exc
+        if not isinstance(decoded, dict):
+            raise HTTPException(422, "Saved game progress must be a JSON object")
+        progress = db.get(LearningGameProgress, (auth[0].id, game_id))
+        if progress:
+            progress.state_json = body.state
+            progress.updated = time.time()
+        else:
+            progress = LearningGameProgress(user_id=auth[0].id, game_id=game_id,
+                                            state_json=body.state, updated=time.time())
+            db.add(progress)
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            progress = db.get(LearningGameProgress, (auth[0].id, game_id))
+            if not progress:
+                raise
+            progress.state_json = body.state
+            progress.updated = time.time()
+            db.commit()
+        return {"saved": True, "updated": progress.updated}
 
     @app.get("/api/videos")
     def videos(auth=Depends(identity), db=Depends(get_db)):

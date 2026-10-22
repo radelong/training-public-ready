@@ -114,7 +114,7 @@ def test_bug_reports_are_bound_to_signed_in_user_and_admin_only(system):
     learner = user_client(system, "reporting-learner")
     page = learner.get("/labs")
     assert page.status_code == 200
-    assert '/static/academy.js?v=20261022-learning-games-1' in page.text
+    assert '/static/academy.js?v=20261022-game-progress-2' in page.text
     assert 'href="/bug-report"' in page.text
     assert 'href="/admin/bug-reports"' in page.text
     assert learner.get("/bug-report").status_code == 200
@@ -183,7 +183,7 @@ def test_learning_games_are_admin_uploaded_authenticated_and_sandboxed(system):
     workspace = learner.get("/games")
     assert workspace.status_code == 200
     assert 'href="/games" data-page="games"' in workspace.text
-    assert 'academy.js?v=20261022-learning-games-1' in workspace.text
+    assert 'academy.js?v=20261022-game-progress-2' in workspace.text
     assert 'learning.js?v=20261022-learning-games-1' in workspace.text
     assert admin.get("/content").status_code == 200
     html = b"<!doctype html><html><head><meta charset='utf-8'><title>Quiz</title></head><body><script>document.body.textContent='Ready';</script></body></html>"
@@ -196,6 +196,23 @@ def test_learning_games_are_admin_uploaded_authenticated_and_sandboxed(system):
     assert uploaded.status_code == 200, uploaded.text
     game_id = uploaded.json()["id"]
     assert visitor.get(f"/api/games/{game_id}/play").status_code == 401
+    progress_path = f"/api/games/{game_id}/progress"
+    assert visitor.get(progress_path).status_code == 401
+    assert visitor.put(progress_path, json={"state": "{}"}).status_code == 401
+    assert learner.get(progress_path).json() == {"state": None, "updated": None}
+    saved_state = json.dumps({"v": 1, "solved": {"ticket-1": True}})
+    assert learner.put(progress_path, json={"state": saved_state}).status_code == 200
+    saved = learner.get(progress_path).json()
+    assert saved["state"] == saved_state and isinstance(saved["updated"], float)
+    peer = user_client(system, "other-game-learner")
+    assert peer.get(progress_path).json() == {"state": None, "updated": None}
+    assert peer.put(progress_path, json={"state": "{\"v\":1}"}).status_code == 200
+    assert learner.get(progress_path).json()["state"] == saved_state
+    assert learner.put(progress_path, json={"state": "not-json"}).status_code == 422
+    assert learner.put(progress_path, json={"state": "[]"}).status_code == 422
+    assert learner.put(progress_path, json={"state": "é" * 70000}).status_code == 413
+    assert learner.get("/api/games/missing/progress").status_code == 404
+    assert learner.put("/api/games/missing/progress", json={"state": "{}"}).status_code == 404
 
     catalog = learner.get("/api/games")
     assert catalog.status_code == 200
