@@ -112,6 +112,11 @@ def test_bug_reports_are_bound_to_signed_in_user_and_admin_only(system):
     assert visitor.get("/bug-report").status_code == 303
 
     learner = user_client(system, "reporting-learner")
+    page = learner.get("/labs")
+    assert page.status_code == 200
+    assert '/static/academy.js?v=20261022-bug-reports-1' in page.text
+    assert 'href="/bug-report"' in page.text
+    assert 'href="/admin/bug-reports"' in page.text
     assert learner.get("/bug-report").status_code == 200
     assert learner.get("/admin/bug-reports").status_code == 403
     assert learner.get("/api/admin/bug-reports").status_code == 403
