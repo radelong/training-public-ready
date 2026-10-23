@@ -8,10 +8,10 @@ VERSION = "20261023-startup-tutorial-1"
 def test_guide_route_and_cache_version_are_connected():
     index = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
     app = (ROOT / "frontend/academy.js").read_text(encoding="utf-8")
-    assert 'href="/labs?view=guide" data-page="lab-guide"' in index
-    assert '"lab-guide":"/labs?view=guide"' in app
+    assert 'data-page="lab-guide"' not in index
+    assert 'labGuideMarkup()+heading("Your next step starts here"' in app
     assert f"/static/lab-startup.js?v={VERSION}" in index
-    assert f"/static/academy.js?v={VERSION}" in index
+    assert "/static/academy.js?v=20261023-catalog-guide-1" in index
 
 
 def test_video_captions_transcript_and_poster_are_available():
@@ -30,7 +30,7 @@ def test_startup_progress_hooks_and_accessible_visual_styles_are_present():
     index = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
     app = (ROOT / "frontend/academy.js").read_text(encoding="utf-8")
     css = (ROOT / "frontend/academy.css").read_text(encoding="utf-8")
-    assert "data-page=\"lab-guide\"" in index
+    assert "data-page=\"lab-guide\"" not in index
     assert "startupMarkup(d)" in app
     assert "setInterval(updateStartupProgress,1000)" in app
     assert "aria-live=\"polite\"" in app
