@@ -18,3 +18,31 @@
   .game-active .game-player{min-height:calc(100dvh - 170px)}
   .game-active .game-player-frame{height:calc(100dvh - 420px);min-height:400px}
 }
+
+/* Lab startup estimate and in-app lab guide. */
+.lab-startup{margin:0 0 20px;border-left:4px solid var(--cyan);background:linear-gradient(110deg,var(--surface),var(--cyanlight));padding:20px 24px}
+.lab-startup-copy .eyebrow{margin-bottom:5px;color:var(--cyan);font-weight:700;letter-spacing:.08em}
+.lab-startup h2{font-size:19px;margin:0 0 5px}
+.lab-startup-copy p{margin:0 0 11px}
+.lab-startup-meter{height:11px;overflow:hidden;border-radius:99px;background:var(--line)}
+.lab-startup-meter i{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--cyan),#58c6bd);transition:width .9s ease}
+.lab-startup-meter[data-indeterminate="true"] i{animation:lab-startup-sweep 1.4s ease-in-out infinite}
+.lab-startup>.small{margin:9px 0 0}
+@keyframes lab-startup-sweep{0%{transform:translateX(-110%)}100%{transform:translateX(300%)}}
+.lab-guide-player{max-width:1120px;margin:0 auto 22px;padding:24px}
+.lab-guide-player-heading{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-bottom:16px}
+.lab-guide-player-heading h2{margin:0 0 5px;font-size:22px}
+.lab-guide-player-heading p{margin:0}
+.guide-duration{white-space:nowrap;border:1px solid var(--line);border-radius:999px;padding:8px 12px;color:var(--muted);font-size:13px}
+.lab-guide-player video{display:block;width:100%;max-height:70vh;aspect-ratio:16/9;background:#102332;border-radius:8px;object-fit:contain}
+.lab-guide-transcript{margin-top:14px;border-top:1px solid var(--line);padding-top:13px}
+.lab-guide-transcript summary{color:var(--cyan);font-weight:700;cursor:pointer}
+.lab-guide-transcript>div{max-width:850px;padding:10px 4px 0;color:var(--muted);line-height:1.65}
+.lab-guide-steps{max-width:1120px;margin:0 auto;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+.lab-guide-steps article{padding:18px;border-top:3px solid var(--cyan)}
+.lab-guide-steps article>span{font-size:12px;font-weight:800;letter-spacing:.1em;color:var(--cyan)}
+.lab-guide-steps h3{margin:8px 0 6px;font-size:16px}
+.lab-guide-steps p{margin:0;color:var(--muted);font-size:14px;line-height:1.55}
+@media(max-width:800px){.lab-guide-steps{grid-template-columns:repeat(2,minmax(0,1fr))}.lab-guide-player{padding:18px}}
+@media(max-width:520px){.lab-guide-steps{grid-template-columns:1fr}.lab-guide-player-heading{display:block}.guide-duration{display:inline-block;margin-top:10px}.lab-startup{padding:17px}}
+@media(prefers-reduced-motion:reduce){.lab-startup-meter i{animation:none!important;transition:none!important}.lab-startup-meter[data-indeterminate="true"] i{width:100%!important;background:repeating-linear-gradient(135deg,var(--cyan),var(--cyan) 9px,#58c6bd 9px,#58c6bd 18px)}}

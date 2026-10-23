@@ -1,0 +1,82 @@
+﻿WEBVTT
+
+00:00:00.000 --> 00:00:02.315
+Welcome to the Training Academy.
+
+00:00:02.315 --> 00:00:09.724
+Labs give you a private environment to practice technical tasks without making changes to production systems.
+
+00:00:09.724 --> 00:00:16.207
+This guide covers the full workflow, from choosing a lab to reviewing your results.
+
+00:00:16.207 --> 00:00:22.949
+Open the Lab catalog and review the description, topics, exercise count, and expected completion time.
+
+00:00:22.949 --> 00:00:24.747
+Select Start lab once.
+
+00:00:24.747 --> 00:00:30.590
+If the service is busy, the request may wait for an available seat.
+
+00:00:30.590 --> 00:00:36.882
+During VM setup, the Academy shows a best guess based on typical launch times.
+
+00:00:36.882 --> 00:00:46.321
+The bar is an estimate, not a measured completion percentage, and the lab is ready only when its status says Ready.
+
+00:00:46.321 --> 00:00:50.274
+In the workspace, choose an exercise from the list.
+
+00:00:50.274 --> 00:00:55.104
+Read the task and goal, and review any diagram before starting.
+
+00:00:55.104 --> 00:00:59.496
+Select Start exercise to prepare its lesson files and baseline.
+
+00:00:59.496 --> 00:01:09.157
+The exercise guide stays on the page while you use the terminal, so you can keep the instructions and diagram in view.
+
+00:01:09.157 --> 00:01:13.842
+Select Connect terminal to open the console inside the Academy.
+
+00:01:13.842 --> 00:01:17.122
+Click inside the terminal before typing commands.
+
+00:01:17.122 --> 00:01:23.681
+In a paired lab, the Sender and Listener have separate consoles and different hostnames.
+
+00:01:23.681 --> 00:01:30.708
+If a console disconnects, use Reconnect for that role and continue in the same session.
+
+00:01:30.708 --> 00:01:34.579
+If you get stuck, use Hint for a smaller nudge.
+
+00:01:34.579 --> 00:01:37.675
+Use Solution when you need the full walkthrough.
+
+00:01:37.675 --> 00:01:46.965
+These actions keep the exercise guide and lab session on the page, so you can return to your work without starting a new session.
+
+00:01:46.965 --> 00:01:50.601
+Select Check my work when you are ready.
+
+00:01:50.601 --> 00:01:56.054
+The Academy returns verification feedback and records the result in your account.
+
+00:01:56.054 --> 00:02:03.326
+If the exercise is not complete, read the feedback, make the needed changes and check again.
+
+00:02:03.326 --> 00:02:07.416
+Your lab progress is separate from results already recorded.
+
+00:02:07.416 --> 00:02:12.073
+Restore a clean VM when you want to restart the environment.
+
+00:02:12.073 --> 00:02:16.730
+This deletes files in the assigned VM but keeps recorded results.
+
+00:02:16.730 --> 00:02:23.927
+Select End lab when you are finished; the Academy deletes the assigned VM and releases its seat.
+
+00:02:23.927 --> 00:02:27.737
+Visit My results to review your recorded lab work.
