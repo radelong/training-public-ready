@@ -134,6 +134,8 @@ class VideoCatalogOrder(Base):
     __tablename__ = "video_catalog_order"
     relative_path: Mapped[str] = mapped_column(String(1024), primary_key=True)
     position: Mapped[int] = mapped_column(Integer)
+    author: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    topic: Mapped[str | None] = mapped_column(String(180), nullable=True)
 
 
 class Audit(Base):
@@ -248,6 +250,12 @@ def database(url):
             # 742610 protects allocations; 742611 elects the long-running worker.
             connection.execute(text('SELECT pg_advisory_xact_lock(742612)'))
         Base.metadata.create_all(connection)
+        migrations = {'video_catalog_order': {'author': 'VARCHAR(180)', 'topic': 'VARCHAR(180)'}}
+        for table, columns in migrations.items():
+            existing = {c['name'] for c in inspect(connection).get_columns(table)}
+            for name, definition in columns.items():
+                if name not in existing:
+                    connection.execute(text(f'ALTER TABLE {table} ADD COLUMN {name} {definition}'))
         if 'question_order_json' not in {c['name'] for c in inspect(connection).get_columns('exam_attempts')}:
             connection.execute(text("ALTER TABLE exam_attempts ADD COLUMN question_order_json TEXT NOT NULL DEFAULT '[]'"))
     return engine, sessionmaker(engine, expire_on_commit=False)

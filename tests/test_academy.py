@@ -3,16 +3,18 @@ import hashlib
 import hmac
 import json
 import struct
+import sqlite3
 import time
 from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import padding
-from sqlalchemy import select
+from sqlalchemy import inspect, select
 from academy.app import create_app
 from academy.config import Settings
-from academy.db import Lab, LabSession, Job, Result, ConsoleGrant, HttpTunnel, User
+from academy.db import (Lab, LabSession, Job, Result, ConsoleGrant, HttpTunnel, User,
+                        Login, VideoCatalogOrder, database)
 from academy.db import BugReport
 from academy.worker import execute_job, tick
 from academy.security import guac_data, encrypt_key, decrypt_key, digest
@@ -625,3 +627,62 @@ def test_logout_and_password_change(system):
     assert client.get("/api/me").status_code == 401
     assert client.post("/api/login",json={"username":"admin","password":"Administrator-123!"}).status_code == 401
     assert client.post("/api/login",json={"username":"admin","password":"Long-new-password-123"}).status_code == 200
+
+def test_video_taxonomy_columns_migrate_existing_order_database(tmp_path):
+    path = tmp_path / "academy.db"
+    with sqlite3.connect(path) as connection:
+        connection.execute("CREATE TABLE video_catalog_order (relative_path VARCHAR(1024) PRIMARY KEY, position INTEGER NOT NULL)")
+        connection.execute("INSERT INTO video_catalog_order VALUES ('Creator/Topic/Lesson.mp4', 3)")
+    engine, sessions = database(f"sqlite:///{path.as_posix()}")
+    try:
+        columns = {column["name"] for column in inspect(engine).get_columns("video_catalog_order")}
+        assert {"relative_path", "position", "author", "topic"} <= columns
+        with sessions() as db:
+            row = db.get(VideoCatalogOrder, "Creator/Topic/Lesson.mp4")
+            assert (row.position, row.author, row.topic) == (3, None, None)
+    finally:
+        engine.dispose()
+
+
+
+def test_video_taxonomy_is_admin_only_persistent_and_preserves_order(system, tmp_path):
+    _, admin, _, settings = system
+    settings.video_root = str(tmp_path / "videos")
+    root = Path(settings.video_root)
+    source = root / "Old Creator" / "Python Basics"
+    destination = root / "Eli the Computer Guy" / "Linux"
+    source.mkdir(parents=True)
+    destination.mkdir(parents=True)
+    for title in ("Alpha", "Bravo"):
+        (source / f"{title}.mp4").write_bytes(title.encode())
+    (destination / "Existing lesson.mp4").write_bytes(b"existing")
+
+    initial = admin.get("/api/videos").json()["videos"]
+    source_items = [item for item in initial if item["author"] == "Old Creator"]
+    source_ids = [source_items[1]["id"], source_items[0]["id"]]
+    ordered = admin.put("/api/admin/videos/order", json={
+        "author": "Old Creator", "topic": "Python Basics", "video_ids": source_ids})
+    assert ordered.status_code == 200
+
+    learner = user_client(system, "video-taxonomy-learner")
+    body = {"source_author": "Old Creator", "source_topic": "Python Basics",
+            "author": "Eli the Computer Guy", "topic": "Python"}
+    assert learner.put("/api/admin/videos/taxonomy", json=body).status_code == 403
+    saved = admin.put("/api/admin/videos/taxonomy", json=body)
+    assert saved.status_code == 200, saved.text
+    assert saved.json() == {"saved": True, "count": 2,
+                            "author": "Eli the Computer Guy", "topic": "Python"}
+
+    videos = admin.get("/api/videos").json()["videos"]
+    moved = [item for item in videos if item["topic"] == "Python"]
+    assert {item["author"] for item in moved} == {"Eli the Computer Guy"}
+    assert [item["title"] for item in moved] == ["Bravo", "Alpha"]
+    assert [item["title"] for item in videos if item["topic"] == "Linux"] == ["Existing lesson"]
+
+    renamed = admin.put("/api/admin/videos/creator", json={
+        "source_author": "Eli the Computer Guy", "author": "Eli Computer Guy"})
+    assert renamed.status_code == 200, renamed.text
+    videos = admin.get("/api/videos").json()["videos"]
+    assert {item["author"] for item in videos} == {"Eli Computer Guy"}
+    assert [item["title"] for item in videos if item["topic"] == "Python"] == ["Bravo", "Alpha"]
+    assert [item["title"] for item in videos if item["topic"] == "Linux"] == ["Existing lesson"]

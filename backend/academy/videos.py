@@ -91,7 +91,8 @@ def watched_seconds(ranges: list[list[float]]) -> float:
     return sum(last - first for first, last in ranges)
 
 
-def catalogue(root_path: str, order_by_path: dict[str, int] | None = None) -> list[Video] | None:
+def catalogue(root_path: str, order_by_path: dict[str, int] | None = None,
+              labels_by_path: dict[str, tuple[str | None, str | None]] | None = None) -> list[Video] | None:
     """Return None while the configured media share is unavailable."""
     root = Path(root_path)
     try:
@@ -114,6 +115,10 @@ def catalogue(root_path: str, order_by_path: dict[str, int] | None = None) -> li
                     # in the series carry Eli the Computer Guy as their MP4 artist.
                     if creator.casefold() == "cloud computing":
                         creator, subject = "Eli the Computer Guy", "Cloud Computing"
+                    override = (labels_by_path or {}).get(relative)
+                    if override:
+                        creator = override[0] or creator
+                        subject = override[1] or subject
                     videos.append(Video(
                         id=sha256(f"{relative}\0{details.st_size}\0{details.st_mtime_ns}".encode("utf-8")).hexdigest(),
                         author=creator, topic=subject, title=file.stem,

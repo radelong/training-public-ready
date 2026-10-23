@@ -50,6 +50,7 @@ async function renderBugReports(){const reports=await api("/admin/bug-reports");
 async function renderVideos(){const library=await api("/videos");state.videoAvailable=library.available;state.videoItems=library.videos;renderVideoLibrary();}
 async function renderGames(){state.games=await api("/games");const game=state.games.find(item=>item.id===state.gameId);if(state.gameId&&!game)state.gameId=null;const player=game?`<section class="panel game-player"><div class="game-player-heading"><div><p class="eyebrow">${esc(game.category)}</p><h2>${esc(game.title)}</h2><p class="muted">${esc(game.description)}</p></div><button class="secondary" data-game-back>Back to games</button></div><iframe class="game-player-frame" title="${esc(game.title)}" sandbox="allow-scripts" referrerpolicy="no-referrer" src="/api/games/${esc(game.id)}/play"></iframe><p class="small muted">Progress saves to your signed-in account. The isolated game cannot access Academy data, cookies, or APIs directly. Remote resources are blocked.</p></section>`:"";const cards=state.games.map(item=>`<article class="panel game-card"><div class="game-card-mark" aria-hidden="true">✦</div><p class="eyebrow">${esc(item.category)}</p><h2>${esc(item.title)}</h2><p>${esc(item.description||"A self-paced learning game.")}</p><p class="small muted">${Math.max(1,Math.ceil(item.size/1024))} KB · Available offline</p><button class="primary" data-game-play="${esc(item.id)}">Play game</button></article>`).join("");const content=$("content");content.classList.toggle("game-active",Boolean(game));content.innerHTML=heading("Learning games","Practice concepts in short interactive games built for the Academy.")+player+(cards?`<div class="game-grid">${cards}</div>`:`<div class="empty"><h2>No games available yet</h2><p class="muted">Your training administrator will add learning games here.</p></div>`);}
 
+let videoOrderSaving=false,videoPointerDrag=null;
 function renderVideoLibrary(){
   const items=state.videoItems;
   const authors=[...new Set(items.map(video=>video.author))];
@@ -67,9 +68,10 @@ function renderVideoLibrary(){
   const topicButtons=topics.map(topic=>{const count=byAuthor.filter(video=>video.topic===topic).length;const active=topic===state.videoTopic;return `<button type="button" data-video-topic="${esc(topic)}" aria-pressed="${active}" class="${active?"selected":""}">${esc(topic)}<small>${count} ${count===1?"video":"videos"}</small></button>`;}).join("");
   const creditText=video=>video.completed_at?"Completed · credit recorded":video.watched_percent?`${video.watched_percent}% watched · no credit yet`:"Not completed";
   const canReorderVideos=state.user?.role==="admin";
-  const videoButtons=byTopic.map((video,index)=>`<div class="video-row"><button type="button" class="video-item ${video.id===state.videoId?"selected":""}" data-video-id="${esc(video.id)}" aria-pressed="${video.id===state.videoId}"><strong>${esc(video.title)}</strong><span>${Math.max(1,Math.round(video.size_bytes/1048576))} MB · ${esc(video.topic)}</span><span class="video-credit ${video.completed_at?"complete":""}">${esc(creditText(video))}</span></button>${canReorderVideos?`<div class="video-order-actions" aria-label="Order ${esc(video.title)}"><button type="button" data-video-move="${index}" data-direction="-1" aria-label="Move ${esc(video.title)} up" ${index===0?"disabled":""}>↑</button><button type="button" data-video-move="${index}" data-direction="1" aria-label="Move ${esc(video.title)} down" ${index===byTopic.length-1?"disabled":""}>↓</button></div>`:""}</div>`).join("");
-  const orderHelp=canReorderVideos?'<p class="video-meta video-order-help">Use the up/down controls to set the order for this creator and topic. Changes save for everyone.</p>':'';
-  $("content").innerHTML=title+`<div class="video-browser"><aside class="video-filters" aria-label="Video filters"><section class="video-filter"><h2>Creators</h2><div class="video-filter-list">${authorButtons}</div></section><section class="video-filter"><h2>Topics</h2><div class="video-filter-list">${topicButtons}</div></section></aside><section class="video-main" aria-label="Video player"><p class="eyebrow">${esc(state.videoAuthor)} / ${esc(state.videoTopic)}</p><h2>${esc(selected.title)}</h2><p class="video-meta">Select Play to stream this video in the Academy.</p><video class="video-player" controls playsinline preload="metadata" controlslist="nodownload" aria-label="${esc(selected.title)}" src="/api/videos/${esc(selected.id)}/stream">Your browser cannot play this video.</video><p class="video-credit-status" data-video-credit role="status">${esc(creditText(selected))}</p><p class="video-meta">Credit is recorded when you reach the end after watching at least 90% of the video. Seeking past sections does not count.</p><h2>Videos in this topic</h2>${orderHelp}<div class="video-items">${videoButtons}</div></section></div>`;
+  const videoButtons=byTopic.map(video=>`<div class="video-row ${canReorderVideos?"video-row-reorder":""}" data-video-row="${esc(video.id)}">${canReorderVideos?`<button type="button" class="video-drag-handle" data-video-drag="${esc(video.id)}" aria-label="Reorder ${esc(video.title)}" aria-keyshortcuts="ArrowUp ArrowDown" title="Drag to reorder. Focus this handle and press Up or Down to move.">⠿</button>`:""}<button type="button" class="video-item ${video.id===state.videoId?"selected":""}" data-video-id="${esc(video.id)}" aria-pressed="${video.id===state.videoId}"><strong>${esc(video.title)}</strong><span>${Math.max(1,Math.round(video.size_bytes/1048576))} MB · ${esc(video.topic)}</span><span class="video-credit ${video.completed_at?"complete":""}">${esc(creditText(video))}</span></button></div>`).join("");
+  const orderHelp=canReorderVideos?'<p class="video-meta video-order-help">Drag the grip to reorder videos in this topic. You can also focus a grip and press Up or Down. Changes save for everyone.</p><p class="video-order-status" data-video-order-status role="status" aria-live="polite"></p>':'';
+  const taxonomyEditor=canReorderVideos?`<div class="video-taxonomy-tools"><form class="video-taxonomy-editor" data-video-taxonomy data-source-author="${esc(state.videoAuthor)}" data-source-topic="${esc(state.videoTopic)}"><h3>Move or rename this topic</h3><p class="video-meta">Change the creator or topic for all ${byTopic.length} videos in this group.</p><label>Creator<input name="author" list="video-creators" maxlength="180" required value="${esc(state.videoAuthor)}"><datalist id="video-creators">${authors.map(author=>`<option value="${esc(author)}">`).join("")}</datalist></label><label>Topic<input name="topic" maxlength="180" required value="${esc(state.videoTopic)}"></label><button class="secondary" type="submit">Save this topic group</button><p class="video-order-status" data-video-taxonomy-status role="status" aria-live="polite"></p></form><form class="video-taxonomy-editor" data-video-creator data-source-author="${esc(state.videoAuthor)}"><h3>Rename creator everywhere</h3><p class="video-meta">Rename ${esc(state.videoAuthor)} across all topics and videos.</p><label>New creator name<input name="author" maxlength="180" required value="${esc(state.videoAuthor)}"></label><button class="secondary" type="submit">Rename creator</button><p class="video-order-status" data-video-creator-status role="status" aria-live="polite"></p></form></div>`:"";
+  $("content").innerHTML=title+`<div class="video-browser"><aside class="video-filters" aria-label="Video filters"><section class="video-filter"><h2>Creators</h2><div class="video-filter-list">${authorButtons}</div></section><section class="video-filter"><h2>Topics</h2><div class="video-filter-list">${topicButtons}</div></section></aside><section class="video-main" aria-label="Video player"><p class="eyebrow">${esc(state.videoAuthor)} / ${esc(state.videoTopic)}</p><h2>${esc(selected.title)}</h2><p class="video-meta">Select Play to stream this video in the Academy.</p><video class="video-player" controls playsinline preload="metadata" controlslist="nodownload" aria-label="${esc(selected.title)}" src="/api/videos/${esc(selected.id)}/stream">Your browser cannot play this video.</video><p class="video-credit-status" data-video-credit role="status">${esc(creditText(selected))}</p><p class="video-meta">Credit is recorded when you reach the end after watching at least 90% of the video. Seeking past sections does not count.</p>${taxonomyEditor}<h2>Videos in this topic</h2>${orderHelp}<div class="video-items ${canReorderVideos?"video-items-reorder":""}">${videoButtons}</div></section></div>`;
   const player=$("content").querySelector("video");
   player.addEventListener("error",()=>notify("The video could not play. Refresh the library or contact your training administrator."));
   let lastSent=0,creditUnavailable=false,queue=Promise.resolve();
@@ -87,24 +89,100 @@ function renderVideoLibrary(){
   player.addEventListener("seeked",()=>report());
   player.addEventListener("ended",()=>report(true));
 }
+async function saveVideoOrder(videoIds,focusId){
+  if(videoOrderSaving||state.user?.role!=="admin")return;
+  const ordered=state.videoItems.filter(video=>video.author===state.videoAuthor&&video.topic===state.videoTopic);
+  if(videoIds.length!==ordered.length||new Set(videoIds).size!==ordered.length||videoIds.some(id=>!ordered.some(video=>video.id===id)))return;
+  videoOrderSaving=true;
+  const status=$("content").querySelector("[data-video-order-status]");
+  if(status)status.textContent="Saving order…";
+  let saved=false;
+  try{
+    await api("/admin/videos/order","PUT",{author:state.videoAuthor,topic:state.videoTopic,video_ids:videoIds});
+    saved=true;
+    notify("Video order saved for this topic");
+  }catch(error){notify(`Could not save video order: ${error.message}`);}
+  try{await renderVideos();}catch(error){notify(`Could not refresh the video list: ${error.message}`);}
+  videoOrderSaving=false;
+  const resultStatus=$("content").querySelector("[data-video-order-status]");
+  if(resultStatus)resultStatus.textContent=saved?"Order saved.":"Order was not saved. The previous order was restored.";
+  if(focusId){const handle=[...document.querySelectorAll("[data-video-drag]")].find(item=>item.dataset.videoDrag===focusId);handle?.focus();}
+}
+document.addEventListener("keydown",event=>{
+  const handle=event.target.closest?.("[data-video-drag]");
+  if(!handle||state.user?.role!=="admin"||!(event.key==="ArrowUp"||event.key==="ArrowDown"))return;
+  const list=handle.closest(".video-items"),rows=[...list.querySelectorAll("[data-video-row]")],from=rows.indexOf(handle.closest("[data-video-row]")),to=from+(event.key==="ArrowUp"?-1:1);
+  if(to<0||to>=rows.length)return;
+  event.preventDefault();
+  if(to<from)list.insertBefore(rows[from],rows[to]);else list.insertBefore(rows[to],rows[from]);
+  saveVideoOrder([...list.querySelectorAll("[data-video-row]")].map(row=>row.dataset.videoRow),handle.dataset.videoDrag);
+});
+document.addEventListener("pointerdown",event=>{
+  const handle=event.target.closest?.("[data-video-drag]");
+  if(!handle||state.user?.role!=="admin"||videoOrderSaving||event.button!==0)return;
+  const list=handle.closest(".video-items-reorder");
+  if(!list)return;
+  videoPointerDrag={id:handle.dataset.videoDrag,pointerId:event.pointerId,list,handle,initialIds:[...list.querySelectorAll("[data-video-row]")].map(row=>row.dataset.videoRow)};
+  handle.setPointerCapture(event.pointerId);
+  handle.closest("[data-video-row]").classList.add("is-dragging");
+});
+document.addEventListener("pointermove",event=>{
+  const drag=videoPointerDrag;
+  if(!drag||drag.pointerId!==event.pointerId)return;
+  const target=document.elementFromPoint(event.clientX,event.clientY),row=target?.closest("[data-video-row]");
+  if(!row||row.parentElement!==drag.list)return;
+  const source=[...drag.list.querySelectorAll("[data-video-row]")].find(item=>item.dataset.videoRow===drag.id);
+  if(!source||source===row)return;
+  event.preventDefault();
+  const placeAfter=event.clientY>row.getBoundingClientRect().top+row.offsetHeight/2;
+  for(const item of drag.list.querySelectorAll("[data-video-row]"))item.classList.remove("drop-before","drop-after");
+  row.classList.add(placeAfter?"drop-after":"drop-before");
+  const reference=placeAfter?row.nextSibling:row;
+  if(reference!==source)drag.list.insertBefore(source,reference);
+});
+document.addEventListener("pointerup",event=>{
+  const drag=videoPointerDrag;
+  if(!drag||drag.pointerId!==event.pointerId)return;
+  videoPointerDrag=null;
+  for(const row of drag.list.querySelectorAll("[data-video-row]"))row.classList.remove("is-dragging","drop-before","drop-after");
+  const videoIds=[...drag.list.querySelectorAll("[data-video-row]")].map(row=>row.dataset.videoRow);
+  if(videoIds.some((id,index)=>id!==drag.initialIds[index]))saveVideoOrder(videoIds,drag.id);
+});
+document.addEventListener("pointercancel",event=>{
+  const drag=videoPointerDrag;
+  if(!drag||drag.pointerId!==event.pointerId)return;
+  videoPointerDrag=null;
+  renderVideos().catch(error=>notify(`Could not restore video order: ${error.message}`));
+});
 document.addEventListener("click",async event=>{
-  const target=event.target.closest("button[data-video-author],button[data-video-topic],button[data-video-id],button[data-video-refresh],button[data-video-move]");
+  const target=event.target.closest("button[data-video-author],button[data-video-topic],button[data-video-id],button[data-video-refresh]");
   if(!target||!state.user)return;
   try{
     if(target.hasAttribute("data-video-refresh"))await renderVideos();
-    else if(target.hasAttribute("data-video-move")){
-      if(state.user.role!=="admin")return;
-      const ordered=state.videoItems.filter(video=>video.author===state.videoAuthor&&video.topic===state.videoTopic);
-      const from=Number(target.dataset.videoMove),to=from+Number(target.dataset.direction);
-      if(!Number.isInteger(from)||to<0||to>=ordered.length)return;
-      [ordered[from],ordered[to]]=[ordered[to],ordered[from]];
-      await api("/admin/videos/order","PUT",{author:state.videoAuthor,topic:state.videoTopic,video_ids:ordered.map(video=>video.id)});
-      await renderVideos();notify("Video order saved for this topic");
-    }
     else if(target.hasAttribute("data-video-author")){state.videoAuthor=target.dataset.videoAuthor;state.videoTopic=null;state.videoId=null;renderVideoLibrary();}
     else if(target.hasAttribute("data-video-topic")){state.videoTopic=target.dataset.videoTopic;state.videoId=null;renderVideoLibrary();}
     else if(target.hasAttribute("data-video-id")){state.videoId=target.dataset.videoId;renderVideoLibrary();}
   }catch(error){notify(error.message);}
+});
+document.addEventListener("submit",async event=>{
+  const form=event.target.closest?.("form[data-video-taxonomy]");
+  const creatorForm=event.target.closest?.("form[data-video-creator]");
+  if((!form&&!creatorForm)||state.user?.role!=="admin")return;
+  event.preventDefault();
+  const activeForm=form||creatorForm,data=new FormData(activeForm),isCreatorRename=Boolean(creatorForm),author=String(data.get("author")||"").trim(),topic=String(data.get("topic")||"").trim();
+  const status=activeForm.querySelector(isCreatorRename?"[data-video-creator-status]":"[data-video-taxonomy-status]");
+  if(!author||(!isCreatorRename&&!topic)){status.textContent="Creator and topic are required.";return;}
+  const submit=activeForm.querySelector("button[type=submit]");submit.disabled=true;status.textContent=isCreatorRename?"Renaming creator…":"Saving topic group…";
+  try{
+    if(isCreatorRename){
+      await api("/admin/videos/creator","PUT",{source_author:activeForm.dataset.sourceAuthor,author});
+      state.videoAuthor=author;
+    }else{
+      await api("/admin/videos/taxonomy","PUT",{source_author:activeForm.dataset.sourceAuthor,source_topic:activeForm.dataset.sourceTopic,author,topic});
+      state.videoAuthor=author;state.videoTopic=topic;
+    }
+    state.videoId=null;await renderVideos();notify(isCreatorRename?"Creator renamed across all topics":"Creator and topic saved for this video group");
+  }catch(error){status.textContent=`Could not save changes: ${error.message}`;submit.disabled=false;}
 });
 async function renderAdmin(){
   const info=await api("/admin/overview");

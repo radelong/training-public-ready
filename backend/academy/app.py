@@ -109,6 +109,34 @@ class VideoOrderUpdate(BaseModel):
         return values
 
 
+class VideoTaxonomyUpdate(BaseModel):
+    author: str = Field(min_length=1, max_length=180)
+    topic: str = Field(min_length=1, max_length=180)
+    source_author: str = Field(min_length=1, max_length=180)
+    source_topic: str = Field(min_length=1, max_length=180)
+
+    @field_validator("author", "topic", "source_author", "source_topic")
+    @classmethod
+    def trim_label(cls, value):
+        value = value.strip()
+        if not value:
+            raise ValueError("Creator and topic are required")
+        return value
+
+
+class VideoCreatorRename(BaseModel):
+    source_author: str = Field(min_length=1, max_length=180)
+    author: str = Field(min_length=1, max_length=180)
+
+    @field_validator("source_author", "author")
+    @classmethod
+    def trim_label(cls, value):
+        value = value.strip()
+        if not value:
+            raise ValueError("Creator is required")
+        return value
+
+
 class GameProgressState(BaseModel):
     state: str = Field(min_length=2, max_length=131072)
 
@@ -197,9 +225,11 @@ def create_app(settings=None, provider=None):
         return auth
 
     def ordered_video_catalogue(db):
-        orders = {row.relative_path: row.position
-                  for row in db.scalars(select(VideoCatalogOrder))}
-        return video_catalogue(s.video_root, orders)
+        rows = list(db.scalars(select(VideoCatalogOrder)))
+        orders = {row.relative_path: row.position for row in rows}
+        labels = {row.relative_path: (row.author, row.topic) for row in rows
+                  if row.author is not None or row.topic is not None}
+        return video_catalogue(s.video_root, orders, labels)
 
     def revoke_user_logins(db, user_id, except_token=None):
         query = select(Login).where(Login.user_id == user_id)
@@ -401,6 +431,64 @@ def create_app(settings=None, provider=None):
                      target=f"{body.author}/{body.topic}"[:128]))
         db.commit()
         return {"saved": True, "count": len(group)}
+
+    @app.put("/api/admin/videos/taxonomy")
+    def update_video_taxonomy(body: VideoTaxonomyUpdate, auth=Depends(administrator), db=Depends(get_db)):
+        items = ordered_video_catalogue(db)
+        if items is None:
+            raise HTTPException(503, "Video storage is unavailable")
+        source = [item for item in items
+                  if item.author == body.source_author and item.topic == body.source_topic]
+        if not source:
+            raise HTTPException(404, "Video topic not found")
+        destination_before = [item for item in items
+                              if item.author == body.author and item.topic == body.topic
+                              and item not in source]
+        rows = {row.relative_path: row for row in db.scalars(
+            select(VideoCatalogOrder).where(
+                VideoCatalogOrder.relative_path.in_([item.relative_path for item in source + destination_before]))) }
+        for item in destination_before:
+            if item.relative_path not in rows:
+                row = VideoCatalogOrder(relative_path=item.relative_path, position=item.order or 0)
+                db.add(row)
+                rows[item.relative_path] = row
+        for item in source:
+            row = rows.get(item.relative_path)
+            if row is None:
+                row = VideoCatalogOrder(relative_path=item.relative_path, position=item.order or 0)
+                db.add(row)
+                rows[item.relative_path] = row
+            row.author, row.topic = body.author, body.topic
+        db.flush()
+        destination = [*destination_before, *source]
+        for position, item in enumerate(destination):
+            rows[item.relative_path].position = position
+        db.add(Audit(user_id=auth[0].id, action="update_video_taxonomy",
+                     target=f"{body.source_author}/{body.source_topic} -> {body.author}/{body.topic}"[:128]))
+        db.commit()
+        return {"saved": True, "count": len(source), "author": body.author, "topic": body.topic}
+
+    @app.put("/api/admin/videos/creator")
+    def rename_video_creator(body: VideoCreatorRename, auth=Depends(administrator), db=Depends(get_db)):
+        items = ordered_video_catalogue(db)
+        if items is None:
+            raise HTTPException(503, "Video storage is unavailable")
+        source = [item for item in items if item.author == body.source_author]
+        if not source:
+            raise HTTPException(404, "Video creator not found")
+        rows = {row.relative_path: row for row in db.scalars(
+            select(VideoCatalogOrder).where(
+                VideoCatalogOrder.relative_path.in_([item.relative_path for item in source]))) }
+        for item in source:
+            row = rows.get(item.relative_path)
+            if row is None:
+                row = VideoCatalogOrder(relative_path=item.relative_path, position=item.order or 0)
+                db.add(row)
+            row.author = body.author
+        db.add(Audit(user_id=auth[0].id, action="rename_video_creator",
+                     target=f"{body.source_author} -> {body.author}"[:128]))
+        db.commit()
+        return {"saved": True, "count": len(source), "author": body.author}
 
     @app.get("/api/videos/credits")
     def video_credits(auth=Depends(identity), db=Depends(get_db)):
