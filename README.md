@@ -1,6 +1,6 @@
 # Training platform source
 
-A training portal with accounts, course authoring, learner progress, server-graded exercises, manual written-response grading and isolated lab-session management through Proxmox and Guacamole. This copy includes platform source and generic authored Netlab tooling. It excludes actual course PDFs, real exam banks/answer keys, learner records, administrator secrets, site-specific configuration, operational reports and deployment media.
+A training portal with accounts, course authoring, learner progress, server-graded exercises, manual written-response grading and isolated lab-session management through Proxmox and Guacamole. Classes can include opening-only, all-module pretests with module credit for perfect results. This copy includes platform source and generic authored Netlab tooling. It excludes actual course PDFs, real exam banks/answer keys, learner records, administrator secrets, site-specific configuration, operational reports and deployment media.
 
 The public website has separate Home (`/`), How training works (`/about`), and User agreement (`/terms`) pages. The sign-in form at `/login` contains the agreement checkbox. Direct `/labs`, `/classes`, `/videos`, `/sessions`, `/results`, `/account`, `/content`, and `/admin` requests require an authenticated session; the last two also require an administrator. Public pages answer `GET`, `HEAD`, and `OPTIONS` without granting cross-origin API access.
 

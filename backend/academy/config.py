@@ -16,7 +16,7 @@ class Settings:
     pve_storage: str = os.getenv("PVE_STORAGE", "local-lvm")
     pve_learner_pool: str = os.getenv("PVE_LEARNER_POOL", "academy-learners")
     pve_bridge: str = os.getenv("PVE_LAB_BRIDGE", "vmbr1")
-    console_source: str = os.getenv("CONSOLE_SOURCE_IP", "192.0.2.10")
+    console_source: str = os.getenv("CONSOLE_SOURCE_IP", "10.44.0.10")
     lab_prefix: str = os.getenv("LAB_PREFIX", "10.44.0")
     first_vmid: int = int(os.getenv("FIRST_VMID", "5000"))
     capacity: int = int(os.getenv("CAPACITY", "20"))

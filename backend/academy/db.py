@@ -50,6 +50,7 @@ class HttpTunnel(Base):
     __tablename__ = "http_tunnels"
     id: Mapped[str] = mapped_column(String(128), primary_key=True)
     token_hash: Mapped[str] = mapped_column(ForeignKey("console_grants.token_hash", ondelete="CASCADE"))
+    tunnel_token_hash: Mapped[str] = mapped_column(String(64), default="")
 
 
 class Lab(Base):
@@ -59,6 +60,7 @@ class Lab(Base):
     description: Mapped[str] = mapped_column(Text)
     kind: Mapped[str] = mapped_column(String(24))
     template_id: Mapped[int] = mapped_column(Integer)
+    secondary_template_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     cores: Mapped[int] = mapped_column(Integer, default=2)
     memory: Mapped[int] = mapped_column(Integer, default=2048)
@@ -72,10 +74,13 @@ class LabSession(Base):
     lab_id: Mapped[str] = mapped_column(ForeignKey("labs.id"))
     state: Mapped[str] = mapped_column(String(24), default="queued")
     vmid: Mapped[int | None] = mapped_column(Integer, unique=True, nullable=True)
+    secondary_vmid: Mapped[int | None] = mapped_column(Integer, unique=True, nullable=True)
     ip: Mapped[str] = mapped_column(String(64), default="")
+    secondary_ip: Mapped[str] = mapped_column(String(64), default="")
     key_cipher: Mapped[str] = mapped_column(Text, default="")
     public_key: Mapped[str] = mapped_column(Text, default="")
     host_key: Mapped[str] = mapped_column(Text, default="")
+    secondary_host_key: Mapped[str] = mapped_column(Text, default="")
     active_drill: Mapped[str] = mapped_column(String(128), default="")
     message: Mapped[str] = mapped_column(Text, default="Waiting for a worker")
     created: Mapped[float] = mapped_column(Float, default=time.time)
@@ -161,10 +166,10 @@ class BugReport(Base):
 
 class LearningGame(Base):
     __tablename__ = "learning_games"
-    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
     title: Mapped[str] = mapped_column(String(120))
     description: Mapped[str] = mapped_column(Text, default="")
-    category: Mapped[str] = mapped_column(String(24), default="General")
+    category: Mapped[str] = mapped_column(String(32), default="General")
     filename: Mapped[str] = mapped_column(String(180))
     size: Mapped[int] = mapped_column(Integer)
     sha256: Mapped[str] = mapped_column(String(64))
@@ -225,6 +230,37 @@ class CourseProgress(Base):
     __table_args__ = (UniqueConstraint("version_id", "user_id"),)
 
 
+class ModuleQuizAttempt(Base):
+    __tablename__ = "module_quiz_attempts"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    version_id: Mapped[str] = mapped_column(ForeignKey("course_versions.id"))
+    module_id: Mapped[str] = mapped_column(String(64))
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    status: Mapped[str] = mapped_column(String(24), default="in_progress")
+    answers_json: Mapped[str] = mapped_column(Text, default="{}")
+    marks_json: Mapped[str] = mapped_column(Text, default="{}")
+    question_order_json: Mapped[str] = mapped_column(Text, default="[]")
+    score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    passed: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    created: Mapped[float] = mapped_column(Float, default=time.time)
+    submitted: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
+class ProgressTestAttempt(Base):
+    __tablename__ = "progress_test_attempts"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    version_id: Mapped[str] = mapped_column(ForeignKey("course_versions.id"))
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    status: Mapped[str] = mapped_column(String(24), default="in_progress")
+    answers_json: Mapped[str] = mapped_column(Text, default="{}")
+    marks_json: Mapped[str] = mapped_column(Text, default="{}")
+    question_order_json: Mapped[str] = mapped_column(Text, default="[]")
+    score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    module_results_json: Mapped[str] = mapped_column(Text, default="{}")
+    created: Mapped[float] = mapped_column(Float, default=time.time)
+    submitted: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
 class ExamAttempt(Base):
     __tablename__ = "exam_attempts"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
@@ -250,12 +286,19 @@ def database(url):
             # 742610 protects allocations; 742611 elects the long-running worker.
             connection.execute(text('SELECT pg_advisory_xact_lock(742612)'))
         Base.metadata.create_all(connection)
-        migrations = {'video_catalog_order': {'author': 'VARCHAR(180)', 'topic': 'VARCHAR(180)'}}
+        migrations = {
+            'labs': {'secondary_template_id': 'INTEGER'},
+            'lab_sessions': {'secondary_vmid': 'INTEGER', 'secondary_ip': "VARCHAR(64) NOT NULL DEFAULT ''",
+                             'secondary_host_key': "TEXT NOT NULL DEFAULT ''"},
+            'http_tunnels': {'tunnel_token_hash': "VARCHAR(64) NOT NULL DEFAULT ''"},
+            'video_catalog_order': {'author': 'VARCHAR(180)', 'topic': 'VARCHAR(180)'},
+        }
         for table, columns in migrations.items():
             existing = {c['name'] for c in inspect(connection).get_columns(table)}
             for name, definition in columns.items():
                 if name not in existing:
                     connection.execute(text(f'ALTER TABLE {table} ADD COLUMN {name} {definition}'))
+        connection.execute(text('CREATE UNIQUE INDEX IF NOT EXISTS uq_lab_sessions_secondary_vmid ON lab_sessions (secondary_vmid)'))
         if 'question_order_json' not in {c['name'] for c in inspect(connection).get_columns('exam_attempts')}:
             connection.execute(text("ALTER TABLE exam_attempts ADD COLUMN question_order_json TEXT NOT NULL DEFAULT '[]'"))
     return engine, sessionmaker(engine, expire_on_commit=False)

@@ -59,6 +59,146 @@ def test_roles_keys_prerequisites_and_grading(system):
     assert other.get('/api/class-results').json()['attempts'] == []
 
 
+def test_class_catalog_sums_explicit_module_and_exam_time_and_topics(system):
+    admin=system[1]
+    data=definition()
+    data['category']='AI'
+    data['modules'][0].update(estimated_minutes=35,topics=['Prompt structure','Grounding'])
+    data['exam']['estimated_minutes']=20
+    _,vid=publish(admin,data)
+    published=next(course for course in admin.get('/api/courses').json() if course['version_id']==vid)
+    assert published['estimated_minutes']==55
+    assert published['key_topics']==['Grounding','Prompt structure']
+    data=definition();data['exam']['estimated_minutes']=15
+    _,vid=publish(admin,data)
+    published=next(course for course in admin.get('/api/courses').json() if course['version_id']==vid)
+    assert published['estimated_minutes'] is None
+
+
+def test_module_quizzes_hide_keys_grade_at_80_and_shuffle_retake(system):
+    admin=system[1]; learner=user_client(system,'module-quiz-learner')
+    data=definition()
+    data['modules'][0]['quiz']=[
+        {"id":"route-q1","type":"multiple_choice","prompt":"Which command shows routes?",
+         "choices":["pwd","ip route"],"correct":1,"points":1,"explanation":"ip route displays the kernel routing table.",
+         "choice_explanations":["pwd prints the current directory.","This command displays route entries."]},
+        {"id":"route-q2","type":"true_false","prompt":"The connected route can work without a gateway.",
+         "choices":["True","False"],"correct":0,"points":1,"explanation":"A directly connected subnet needs no next hop.",
+         "choice_explanations":["Correct; the interface owns this connected route.","A next hop is not required for directly connected networks."]}]
+    _,vid=publish(admin,data)
+    learner.post(f'/api/course-versions/{vid}/enroll')
+    lesson=learner.get(f'/api/course-versions/{vid}').json()
+    assert all('correct' not in q and 'explanation' not in q for q in lesson['content']['modules'][0]['quiz'])
+    assert learner.put(f'/api/course-versions/{vid}/progress',json={'module_id':'module1','complete':True}).status_code==409
+
+    first=learner.post(f'/api/course-versions/{vid}/modules/module1/quiz-attempts',json={}).json()
+    first_order=[q['id'] for q in first['questions']]
+    assert 'correct_answers' not in first and all('explanation' not in q for q in first['questions'])
+    failed=learner.post(f"/api/module-quiz-attempts/{first['id']}/submit",json={'answers':{'route-q1':0,'route-q2':0}}).json()
+    assert failed['score']==50 and failed['passed'] is False
+    assert failed['correct_answers']=={'route-q1':1,'route-q2':0}
+    q1=next(q for q in failed['questions'] if q['id']=='route-q1')
+    assert q1['selected_explanation']=='pwd prints the current directory.'
+    assert q1['explanation']=='ip route displays the kernel routing table.'
+
+    second=learner.post(f'/api/course-versions/{vid}/modules/module1/quiz-attempts',json={}).json()
+    assert [q['id'] for q in second['questions']] != first_order
+    outsider=user_client(system,'module-quiz-outsider')
+    assert outsider.get(f"/api/module-quiz-attempts/{second['id']}").status_code==404
+    passed=learner.post(f"/api/module-quiz-attempts/{second['id']}/submit",json={'answers':{'route-q1':1,'route-q2':0}}).json()
+    assert passed['score']==100 and passed['passed'] is True
+    assert learner.put(f'/api/course-versions/{vid}/progress',json={'module_id':'module1','complete':True}).status_code==200
+    assert learner.post(f'/api/course-versions/{vid}/attempts').status_code==200
+
+
+def test_class_progress_test_awards_credit_only_for_perfect_module_scores(system):
+    admin=system[1]; learner=user_client(system,'progress-test-student')
+    data=definition()
+    data['progress_test_enabled']=True
+    data['modules'][0]['quiz']=[
+        {"id":f"pt-routing-{i}","type":"multiple_choice","prompt":f"Routing pretest {i}: Which protocol resolves names?",
+         "choices":["DNS","NTP"],"correct":0,"points":1,"explanation":"DNS resolves host names."}
+        for i in range(8)]
+    data['modules'].append({"id":"module2","title":"Addressing","description":"Address practice.",
+        "lab_id":"netlab","required":True,"quiz":[
+            {"id":f"pt-address-{i}","type":"multiple_choice","prompt":f"Addressing pretest {i}: Which value is a subnet mask?",
+             "choices":["255.255.255.0","8.8.8.8"],"correct":0,"points":1,
+             "explanation":"The first value identifies a /24 mask."} for i in range(8)]})
+    _,vid=publish(admin,data)
+    learner.post(f'/api/course-versions/{vid}/enroll')
+    lesson=learner.get(f'/api/course-versions/{vid}').json()
+    assert lesson['content']['progress_test_enabled'] is True
+    assert lesson['current_module']==''
+    assert all('correct' not in q for m in lesson['content']['modules'] for q in m['quiz'])
+    first=learner.post(f'/api/course-versions/{vid}/progress-test-attempts').json()
+    assert learner.get(f'/api/course-versions/{vid}').json()['current_module']=='module1'
+    assert len(first['questions'])==16 and {q['module_id'] for q in first['questions']}=={'module1','module2'}
+    assert 'correct_answers' not in first
+    resumed=learner.post(f'/api/course-versions/{vid}/progress-test-attempts').json()
+    assert resumed['id']==first['id'] and resumed['status']=='in_progress'
+    assert learner.post(f'/api/progress-test-attempts/{first["id"]}/submit',json={"answers":{}}).status_code==422
+    answers={**{f"pt-routing-{i}":0 for i in range(8)},
+             **{f"pt-address-{i}":(1 if i==0 else 0) for i in range(8)}}
+    partial=learner.post(f'/api/progress-test-attempts/{first["id"]}/submit',json={"answers":answers}).json()
+    assert partial['score']==93.75
+    assert partial['module_results']['module1']=={"score":100.0,"question_count":8,"perfect":True}
+    assert partial['module_results']['module2']=={"score":87.5,"question_count":8,"perfect":False}
+    assert learner.get(f'/api/course-versions/{vid}').json()['completed']==['module1']
+    assert learner.post(f'/api/course-versions/{vid}/attempts').status_code==409
+    assert learner.put(f'/api/course-versions/{vid}/progress',json={"module_id":"module2","complete":True}).status_code==200
+    assert learner.post(f'/api/course-versions/{vid}/progress-test-attempts').status_code==409
+    assert set(learner.get(f'/api/course-versions/{vid}').json()['completed'])=={'module1','module2'}
+    assert learner.post(f'/api/course-versions/{vid}/attempts').status_code==200
+    outsider=user_client(system,'progress-test-outsider')
+    assert outsider.post(f'/api/progress-test-attempts/{first["id"]}/submit',json={"answers":answers}).status_code==404
+
+
+def test_skipping_class_pretest_keeps_it_closed_after_class_starts(system):
+    admin=system[1]; learner=user_client(system,'progress-test-skip-student')
+    data=definition(); data['progress_test_enabled']=True
+    data['modules'][0]['quiz']=[{"id":f"skip-{i}","type":"multiple_choice","prompt":f"Skip test {i}?",
+        "choices":["A","B"],"correct":0,"points":1,"explanation":"A is correct."} for i in range(8)]
+    _,vid=publish(admin,data)
+    learner.post(f'/api/course-versions/{vid}/enroll')
+    assert learner.get(f'/api/course-versions/{vid}').json()['current_module']==''
+    assert learner.put(f'/api/course-versions/{vid}/progress',json={"module_id":"module1","complete":False}).status_code==200
+    assert learner.get(f'/api/course-versions/{vid}').json()['current_module']=='module1'
+    response=learner.post(f'/api/course-versions/{vid}/progress-test-attempts')
+    assert response.status_code==409
+    assert response.json()['detail']=='The class pretest is only available when the class first opens'
+
+
+def test_enabled_progress_test_requires_each_module_and_no_final_prompt_duplicates(system):
+    admin=system[1]
+    data=definition(); data['progress_test_enabled']=True
+    data['modules'][0]['quiz']=[{"id":f"p{i}","type":"multiple_choice","prompt":f"Question {i}?",
+        "choices":["A","B"],"correct":0,"explanation":"A is correct."} for i in range(8)]
+    data['modules'].append({"id":"module2","title":"Module 2","lab_id":"netlab","quiz":[]})
+    assert admin.post('/api/admin/courses',json=data).status_code==422
+    data['modules'][1]['quiz']=[{"id":f"p2-{i}","type":"multiple_choice","prompt":f"Addressing question {i}?",
+        "choices":["A","B"],"correct":0,"explanation":"A is correct."} for i in range(8)]
+    data['modules'][0]['quiz'].pop()
+    assert admin.post('/api/admin/courses',json=data).status_code==422
+    data['modules'][0]['quiz'].append({"id":"p-final-duplicate","type":"multiple_choice",
+        "prompt":" which COMMAND   displays ROUTES? ","choices":["A","B"],"correct":0,"explanation":"A is correct."})
+    assert admin.post('/api/admin/courses',json=data).status_code==422
+
+
+def test_published_module_quiz_requires_explanations_and_objective_questions(system):
+    admin=system[1]
+    data=definition()
+    data['modules'][0]['quiz']=[{"id":"q","type":"multiple_choice","prompt":"Question?",
+        "choices":["A","B"],"correct":0,"points":1}]
+    created=admin.post('/api/admin/courses',json=data)
+    assert created.status_code==200
+    assert admin.post('/api/admin/courses/'+created.json()['id']+'/publish',
+                      json={'revision':created.json()['revision']}).status_code==422
+
+    data=definition()
+    data['modules'][0]['quiz']=[{"id":"q","type":"written","prompt":"Explain.","points":1,"rubric":"Evidence"}]
+    assert admin.post('/api/admin/courses',json=data).status_code==422
+
+
 def test_failed_attempt_limits_and_score_only(system):
     admin = system[1]; learner = user_client(system, 'student-one')
     data = definition(require=False, attempts=1); data['exam']['feedback'] = 'score_only'
@@ -167,6 +307,24 @@ def test_installed_lab_package_receipt_registers_and_optionally_activates(system
     assert lab['drills'][0]['id'] == 'check-shell'
     assert admin.post('/api/admin/lab-packages/import', json=receipt).status_code == 409
     invalid = {**receipt, "id": "bad-receipt", "disk_sha256": "not-a-checksum"}
+    assert admin.post('/api/admin/lab-packages/import', json=invalid).status_code == 422
+
+
+def test_paired_offline_lab_receipt_imports_both_template_roles(system):
+    admin = system[1]
+    receipt = {"schema_version": 2, "package_format": "academy-lab-package-v2",
+               "id": "callback-practice", "title": "Callback Troubleshooting",
+               "description": "Diagnose a synthetic local HTTP heartbeat.", "kind": "callback",
+               "template_id": 9920, "secondary_template_id": 9921, "cores": 2, "memory": 2048,
+               "disk_sha256": "a" * 64, "secondary_disk_sha256": "b" * 64, "activate": False,
+               "drills": [{"id": "callback-01-sender-service", "title": "Restore Sender service",
+                           "brief": "Inspect the synthetic heartbeat path.", "goal": "Restore delivery.",
+                           "tools": "systemctl, curl", "time": "10 min", "level": "1"}]}
+    response = admin.post('/api/admin/lab-packages/import', json=receipt)
+    assert response.status_code == 200, response.text
+    lab = next(value for value in admin.get('/api/labs').json() if value['id'] == receipt['id'])
+    assert not lab['enabled'] and lab['paired']
+    invalid = {**receipt, "id": "callback-without-listener", "secondary_disk_sha256": None}
     assert admin.post('/api/admin/lab-packages/import', json=invalid).status_code == 422
 
 

@@ -7,13 +7,13 @@ from academy.proxmox import Proxmox
 
 def adapter(handler):
     obj = Proxmox.__new__(Proxmox)
-    obj.s = SimpleNamespace(pve_node="training", pve_storage="local-lvm", pve_bridge="vmbr1", console_source="192.0.2.10")
+    obj.s = SimpleNamespace(pve_node="training", pve_storage="local-lvm", pve_bridge="vmbr1", console_source="10.44.0.10")
     obj.client = httpx.Client(base_url="https://pve.invalid/api2/json", transport=httpx.MockTransport(handler))
     return obj
 
 
 def session():
-    return SimpleNamespace(id="owned-session",vmid=5000,ip="192.0.2.10",public_key="ssh-rsa AAAATEST")
+    return SimpleNamespace(id="owned-session",vmid=5000,ip="10.44.0.100",public_key="ssh-rsa AAAATEST")
 
 
 def test_exec_uses_json_argument_array_and_decoded_output():
@@ -30,6 +30,27 @@ def test_exec_uses_json_argument_array_and_decoded_output():
         return httpx.Response(200,json={"data":data})
     provider = adapter(handler)
     assert provider.exec(session(), ["/usr/local/sbin/academy-lab","check","net-01-link-down"]) == (0,"PASS\n")
+
+
+def test_host_key_pins_the_algorithm_guacamole_negotiates_for_each_role():
+    value = SimpleNamespace(id="owned-session", vmid=5000, secondary_vmid=5008,
+                            ip="10.44.0.100", secondary_ip="10.44.0.108")
+    paths = []
+    def handler(request):
+        paths.append(request.url.path)
+        if request.url.path.endswith("/config"):
+            role = "listener" if "/5008/" in request.url.path else "sender"
+            marker = "academy-session:owned-session:listener" if role == "listener" else "academy-session:owned-session"
+            data = {"description": marker}
+        else:
+            algorithm = "ecdsa" if request.url.params["file"].endswith("ecdsa_key.pub") else "rsa"
+            key_type = "ecdsa-sha2-nistp256" if algorithm == "ecdsa" else "ssh-rsa"
+            data = {"content": f"{key_type} AAAATEST guest\n"}
+        return httpx.Response(200, json={"data": data})
+    provider = adapter(handler)
+    assert provider.host_key(value) == "10.44.0.100 ssh-rsa AAAATEST"
+    assert provider.host_key(value, role="listener", algorithm="ecdsa") == "10.44.0.108 ecdsa-sha2-nistp256 AAAATEST"
+    assert any("/5008/agent/file-read" in path for path in paths)
 
 
 def test_delete_refuses_unowned_and_auth_errors():
@@ -79,8 +100,46 @@ def test_configuration_preserves_mac_and_enforces_isolation():
     adapter(handler).configure(session(),SimpleNamespace(cores=2,memory=2048))
     vmconfig=next(p for method,path,p in calls if method=="PUT" and path.endswith("/config"))
     assert vmconfig["net0"]=="virtio=AA:BB:CC:DD:EE:FF,bridge=vmbr1,firewall=1"
-    assert vmconfig["ipconfig0"]=="ip=192.0.2.10/24"
+    assert vmconfig["ipconfig0"]=="ip=10.44.0.100/24"
     firewall=next(p for method,path,p in calls if path.endswith("/options"))
     assert firewall["policy_in"]==firewall["policy_out"]=="DROP"
     rule=next(p for method,path,p in calls if method=="POST" and path.endswith("/rules"))
-    assert rule["source"]=="192.0.2.10/32" and rule["dport"]=="22"
+    assert rule["source"]=="10.44.0.10/32" and rule["dport"]=="22"
+
+
+def test_paired_configuration_allows_only_sender_to_listener_heartbeat():
+    calls=[]
+    value=SimpleNamespace(id="owned-session", vmid=5000, secondary_vmid=5020,
+                          ip="10.44.0.100", secondary_ip="10.44.0.120",
+                          public_key="ssh-rsa AAAATEST")
+    def handler(request):
+        payload=json.loads(request.content) if request.content else {}
+        calls.append((request.method,request.url.path,payload))
+        path=request.url.path
+        if path.endswith("/config") and request.method=="GET":
+            role="listener" if path.endswith("/5020/config") else "sender"
+            marker="academy-session:owned-session:listener" if role=="listener" else "academy-session:owned-session"
+            data={"description":marker,"net0":"virtio=AA:BB:CC:DD:EE:FF,bridge=vmbr1"}
+        elif path.endswith("/status/current"):
+            data={"status":"stopped"}
+        elif path.endswith("/ipset") and request.method=="GET":
+            data=[]
+        elif path.endswith("/rules") and request.method=="GET":
+            data=[]
+        elif path.endswith("/ipfilter-net0") and request.method=="GET":
+            data=[]
+        else:
+            data=None
+        return httpx.Response(200,json={"data":data})
+    provider=adapter(handler)
+    lab=SimpleNamespace(cores=2,memory=2048,secondary_template_id=9002)
+    provider.configure(value,lab,role="sender")
+    provider.configure(value,lab,role="listener")
+    posted=[payload for method,path,payload in calls if method=="POST" and path.endswith("/rules")]
+    assert any(rule.get("comment")=="academy-heartbeat-out" and rule.get("dest")=="10.44.0.120/32"
+               and rule.get("dport")=="8080" for rule in posted)
+    assert any(rule.get("comment")=="academy-heartbeat-in" and rule.get("source")=="10.44.0.100/32"
+               and rule.get("dport")=="8080" for rule in posted)
+    configs=[payload for method,path,payload in calls if method=="PUT" and path.endswith("/config")]
+    assert {config["ipconfig0"] for config in configs}=={"ip=10.44.0.100/24","ip=10.44.0.120/24"}
+    assert all(config["net0"].endswith(",firewall=1") for config in configs)

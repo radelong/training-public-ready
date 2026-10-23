@@ -1,5 +1,6 @@
 """Same-origin Guacamole gateway with login and per-token VM authorization."""
 import asyncio
+import hmac
 import logging
 import time
 from urllib.parse import parse_qs, urlencode
@@ -43,12 +44,21 @@ def mount_console(app, factory, settings):
             raise HTTPException(403, "Open the console from your lab workspace")
         cookie = request.cookies.get("academy_session")
         tunnel_hash = None
-        if path == "tunnel" and not token:
-            parts = request.url.query.split(":")
-            if len(parts) > 1 and parts[0] in ("read", "write"):
-                with factory() as db:
-                    tunnel = db.get(HttpTunnel, parts[1])
-                    tunnel_hash = tunnel.token_hash if tunnel else None
+        http_tunnel = None
+        if path == "tunnel" and request.url.query != "connect":
+            operation, separator, tunnel_id = request.url.query.partition(":")
+            if not separator or operation not in ("read", "write"):
+                raise HTTPException(400, "Invalid console tunnel operation")
+            if operation == "read":
+                # Guacamole appends a unique numeric request counter to reads.
+                tunnel_id, separator, request_id = tunnel_id.partition(":")
+                if not separator or not request_id.isdecimal():
+                    raise HTTPException(400, "Invalid console tunnel read request")
+            if not tunnel_id or len(tunnel_id) > 128 or ":" in tunnel_id or "&" in tunnel_id:
+                raise HTTPException(400, "Invalid console tunnel ID")
+            with factory() as db:
+                http_tunnel = db.get(HttpTunnel, tunnel_id)
+                tunnel_hash = http_tunnel.token_hash if http_tunnel else None
             if not tunnel_hash:
                 raise HTTPException(403, "Unknown console tunnel")
         # Static files and the Guacamole shell have no token. Dynamic API/tunnel calls must.
@@ -62,6 +72,11 @@ def mount_console(app, factory, settings):
                     sorted(k for k in request.headers if k.lower() in ("guacamole-token", "authorization", "x-guacamole-token")))
                 raise HTTPException(403, "Missing console connection token")
         authorize(factory, cookie, token, tunnel_hash)
+        if path == "tunnel" and http_tunnel:
+            tunnel_token = request.headers.get("Guacamole-Tunnel-Token", "")
+            if (not tunnel_token or len(tunnel_token) > 256
+                    or not hmac.compare_digest(http_tunnel.tunnel_token_hash, digest(tunnel_token))):
+                raise HTTPException(403, "Unknown console tunnel")
         if request.method not in ("GET", "HEAD"):
             origin = request.headers.get("origin")
             if origin and origin.rstrip("/") != str(request.base_url).rstrip("/"):
@@ -87,13 +102,20 @@ def mount_console(app, factory, settings):
         if path == "tunnel" and request.url.query == "connect" and upstream.status_code == 200:
             value = await upstream.aread()
             tunnel_id = value.decode().strip()
-            if len(tunnel_id) <= 128 and token:
-                with factory() as db:
-                    db.merge(HttpTunnel(id=tunnel_id, token_hash=digest(token)))
-                    db.commit()
+            tunnel_token = upstream.headers.get("Guacamole-Tunnel-Token", "")
+            if not token or not tunnel_id or len(tunnel_id) > 128 or not tunnel_token or len(tunnel_token) > 256:
+                await close()
+                raise HTTPException(502, "Console tunnel handshake failed")
+            with factory() as db:
+                db.merge(HttpTunnel(id=tunnel_id, token_hash=digest(token),
+                                    tunnel_token_hash=digest(tunnel_token)))
+                db.commit()
             await close()
             from fastapi import Response
-            return Response(value, status_code=upstream.status_code, media_type="text/plain")
+            headers = {"Guacamole-Tunnel-Token": tunnel_token}
+            if "cache-control" in upstream.headers:
+                headers["Cache-Control"] = upstream.headers["cache-control"]
+            return Response(value, status_code=upstream.status_code, media_type="text/plain", headers=headers)
 
         async def chunks():
             async for chunk in upstream.aiter_bytes():

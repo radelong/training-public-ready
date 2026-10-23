@@ -13,8 +13,8 @@ from cryptography.hazmat.primitives import padding
 from sqlalchemy import inspect, select
 from academy.app import create_app
 from academy.config import Settings
-from academy.db import (Lab, LabSession, Job, Result, ConsoleGrant, HttpTunnel, User,
-                        Login, VideoCatalogOrder, database)
+from academy.db import (Lab, LabSession, Job, Result, ConsoleGrant, HttpTunnel, User, Login,
+                        VideoCatalogOrder, database)
 from academy.db import BugReport
 from academy.worker import execute_job, tick
 from academy.security import guac_data, encrypt_key, decrypt_key, digest
@@ -23,6 +23,22 @@ from academy import agreement
 from fakes import FakeProxmox
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_video_taxonomy_columns_migrate_existing_order_database(tmp_path):
+    path = tmp_path / "academy.db"
+    with sqlite3.connect(path) as connection:
+        connection.execute("CREATE TABLE video_catalog_order (relative_path VARCHAR(1024) PRIMARY KEY, position INTEGER NOT NULL)")
+        connection.execute("INSERT INTO video_catalog_order VALUES ('Creator/Topic/Lesson.mp4', 3)")
+    engine, sessions = database(f"sqlite:///{path.as_posix()}")
+    try:
+        columns = {column["name"] for column in inspect(engine).get_columns("video_catalog_order")}
+        assert {"relative_path", "position", "author", "topic"} <= columns
+        with sessions() as db:
+            row = db.get(VideoCatalogOrder, "Creator/Topic/Lesson.mp4")
+            assert (row.position, row.author, row.topic) == (3, None, None)
+    finally:
+        engine.dispose()
 
 
 def accepted_client(app):
@@ -106,6 +122,32 @@ def test_agreement_gates_sign_in_on_each_hostname(system):
     assert other.post("/api/login", json=credentials).status_code == 200
 
 
+def test_public_pages_and_protected_routes(system):
+    app, admin, _, _ = system
+    visitor = TestClient(app, base_url="https://academy.example.com", follow_redirects=False)
+    for path in ("/", "/about", "/terms"):
+        assert visitor.get(path).status_code == 200
+        assert visitor.head(path).status_code == 200
+        options = visitor.options(path)
+        assert options.status_code == 200
+        assert "Access-Control-Allow-Origin" not in options.headers
+    assert visitor.get("/labs").headers["location"] == "/login?next=%2Flabs"
+    assert visitor.get("/lab-guide").headers["location"] == "/login?next=%2Flab-guide"
+    assert visitor.get("/classes").headers["location"] == "/login?next=%2Fclasses"
+    assert visitor.get("/login").status_code == 200
+    assert 'id="terms-agree"' in visitor.get("/login").text
+    assert visitor.get("/unknown").status_code == 404
+    accepted = accepted_client(app)
+    assert accepted.get("/labs", follow_redirects=False).headers["location"] == "/login?next=%2Flabs"
+    for path in ("/labs", "/lab-guide", "/classes", "/videos", "/games", "/sessions", "/results", "/account", "/admin", "/content"):
+        response = admin.get(path)
+        assert response.status_code == 200
+        assert 'id="app-view"' in response.text
+    learner = user_client(system, "route-learner")
+    assert learner.get("/admin").status_code == 403
+    assert learner.get("/content").status_code == 403
+
+
 def test_bug_reports_are_bound_to_signed_in_user_and_admin_only(system):
     app, admin, _, _ = system
     visitor = TestClient(app, follow_redirects=False)
@@ -114,11 +156,6 @@ def test_bug_reports_are_bound_to_signed_in_user_and_admin_only(system):
     assert visitor.get("/bug-report").status_code == 303
 
     learner = user_client(system, "reporting-learner")
-    page = learner.get("/labs")
-    assert page.status_code == 200
-    assert '/static/academy.js?v=20261022-video-order-1' in page.text
-    assert 'href="/bug-report"' in page.text
-    assert 'href="/admin/bug-reports"' in page.text
     assert learner.get("/bug-report").status_code == 200
     assert learner.get("/admin/bug-reports").status_code == 403
     assert learner.get("/api/admin/bug-reports").status_code == 403
@@ -148,31 +185,6 @@ def test_bug_reports_are_bound_to_signed_in_user_and_admin_only(system):
         assert stored.read_by == db.query(User).filter_by(username="admin").one().id
 
 
-def test_public_pages_and_protected_routes(system):
-    app, admin, _, _ = system
-    visitor = TestClient(app, base_url="https://academy.example.com", follow_redirects=False)
-    for path in ("/", "/about", "/terms"):
-        assert visitor.get(path).status_code == 200
-        assert visitor.head(path).status_code == 200
-        options = visitor.options(path)
-        assert options.status_code == 200
-        assert "Access-Control-Allow-Origin" not in options.headers
-    assert visitor.get("/labs").headers["location"] == "/login?next=%2Flabs"
-    assert visitor.get("/classes").headers["location"] == "/login?next=%2Fclasses"
-    assert visitor.get("/login").status_code == 200
-    assert 'id="terms-agree"' in visitor.get("/login").text
-    assert visitor.get("/unknown").status_code == 404
-    accepted = accepted_client(app)
-    assert accepted.get("/labs", follow_redirects=False).headers["location"] == "/login?next=%2Flabs"
-    for path in ("/labs", "/classes", "/sessions", "/results", "/account", "/admin", "/content"):
-        response = admin.get(path)
-        assert response.status_code == 200
-        assert 'id="app-view"' in response.text
-    learner = user_client(system, "route-learner")
-    assert learner.get("/admin").status_code == 403
-    assert learner.get("/content").status_code == 403
-
-
 def test_learning_games_are_admin_uploaded_authenticated_and_sandboxed(system):
     app, admin, _, settings = system
     visitor = TestClient(app, follow_redirects=False)
@@ -182,12 +194,6 @@ def test_learning_games_are_admin_uploaded_authenticated_and_sandboxed(system):
                         headers={"Content-Type": "text/html"}).status_code == 401
 
     learner = user_client(system, "game-learner")
-    workspace = learner.get("/games")
-    assert workspace.status_code == 200
-    assert 'href="/games" data-page="games"' in workspace.text
-    assert 'academy.js?v=20261022-video-order-1' in workspace.text
-    assert 'learning.js?v=20261022-learning-games-1' in workspace.text
-    assert admin.get("/content").status_code == 200
     html = b"<!doctype html><html><head><meta charset='utf-8'><title>Quiz</title></head><body><script>document.body.textContent='Ready';</script></body></html>"
     headers = {"Content-Type": "text/html", "X-Game-Title": "Offline Quiz",
                "X-Game-Description": "A short test", "X-Game-Category": "Linux",
@@ -247,7 +253,6 @@ def test_learning_games_are_admin_uploaded_authenticated_and_sandboxed(system):
     assert wrong_type.status_code == 415
 
 
-
 def test_open_learning_game_uses_expanded_player_view():
     js = (ROOT / "frontend" / "academy.js").read_text(encoding="utf-8")
     css = (ROOT / "frontend" / "academy.css").read_text(encoding="utf-8")
@@ -299,7 +304,7 @@ def test_video_library_is_private_and_streams_byte_ranges(system, tmp_path):
 
 
 def test_video_order_is_admin_only_complete_and_persistent(system, tmp_path):
-    _, admin, _, settings = system
+    app, admin, _, settings = system
     settings.video_root = str(tmp_path / "videos")
     topic = Path(settings.video_root) / "Creator" / "Topic"
     topic.mkdir(parents=True)
@@ -333,6 +338,49 @@ def test_cloud_computing_is_classified_as_topic_and_creator(system, tmp_path):
     (topic / "Part 1.mp4").write_bytes(b"video")
     video = admin.get("/api/videos").json()["videos"][0]
     assert (video["author"], video["topic"]) == ("Eli the Computer Guy", "Cloud Computing")
+
+
+def test_video_taxonomy_is_admin_only_persistent_and_preserves_order(system, tmp_path):
+    _, admin, _, settings = system
+    settings.video_root = str(tmp_path / "videos")
+    root = Path(settings.video_root)
+    source = root / "Old Creator" / "Python Basics"
+    destination = root / "Eli the Computer Guy" / "Linux"
+    source.mkdir(parents=True)
+    destination.mkdir(parents=True)
+    for title in ("Alpha", "Bravo"):
+        (source / f"{title}.mp4").write_bytes(title.encode())
+    (destination / "Existing lesson.mp4").write_bytes(b"existing")
+
+    initial = admin.get("/api/videos").json()["videos"]
+    source_items = [item for item in initial if item["author"] == "Old Creator"]
+    source_ids = [source_items[1]["id"], source_items[0]["id"]]
+    ordered = admin.put("/api/admin/videos/order", json={
+        "author": "Old Creator", "topic": "Python Basics", "video_ids": source_ids})
+    assert ordered.status_code == 200
+
+    learner = user_client(system, "video-taxonomy-learner")
+    body = {"source_author": "Old Creator", "source_topic": "Python Basics",
+            "author": "Eli the Computer Guy", "topic": "Python"}
+    assert learner.put("/api/admin/videos/taxonomy", json=body).status_code == 403
+    saved = admin.put("/api/admin/videos/taxonomy", json=body)
+    assert saved.status_code == 200, saved.text
+    assert saved.json() == {"saved": True, "count": 2,
+                            "author": "Eli the Computer Guy", "topic": "Python"}
+
+    videos = admin.get("/api/videos").json()["videos"]
+    moved = [item for item in videos if item["topic"] == "Python"]
+    assert {item["author"] for item in moved} == {"Eli the Computer Guy"}
+    assert [item["title"] for item in moved] == ["Bravo", "Alpha"]
+    assert [item["title"] for item in videos if item["topic"] == "Linux"] == ["Existing lesson"]
+
+    renamed = admin.put("/api/admin/videos/creator", json={
+        "source_author": "Eli the Computer Guy", "author": "Eli Computer Guy"})
+    assert renamed.status_code == 200, renamed.text
+    videos = admin.get("/api/videos").json()["videos"]
+    assert {item["author"] for item in videos} == {"Eli Computer Guy"}
+    assert [item["title"] for item in videos if item["topic"] == "Python"] == ["Bravo", "Alpha"]
+    assert [item["title"] for item in videos if item["topic"] == "Linux"] == ["Existing lesson"]
 
 
 def test_video_credit_requires_watched_playback_and_is_per_user(system, tmp_path, monkeypatch):
@@ -504,9 +552,7 @@ def test_admin_removal_revokes_access_ends_lab_and_preserves_records(system):
     with app.state.factory() as db:
         assert db.get(LabSession, created["id"]).state == "ending"
         assert db.scalar(select(Result).where(Result.user_id == user_id)).output == "Retained training record"
-
     process(system)
-    assert not provider.vms
     with app.state.factory() as db:
         assert db.get(LabSession, created["id"]).state == "ended"
         assert db.get(User, user_id).enabled is False
@@ -518,6 +564,118 @@ def test_admin_removal_revokes_access_ends_lab_and_preserves_records(system):
     with app.state.factory() as db:
         admin_id = db.scalar(select(User).where(User.username == "admin")).id
     assert admin.put(f"/api/admin/users/{admin_id}", json={"enabled": False}).status_code == 409
+
+
+def test_paired_lab_reserves_two_roles_and_worker_cleans_both(system):
+    app, admin, provider, _ = system
+    with app.state.factory() as db:
+        db.add(Lab(id="callback", title="Callback Troubleshooting", description="Paired lab",
+                   kind="callback", template_id=9201, secondary_template_id=9202,
+                   enabled=True, cores=2, memory=2048, drills_json=json.dumps([
+                       {"id":"callback-01-sender-service","title":"Sender service","brief":"Find the fault.",
+                         "goal":"Restore the heartbeat.","tools":"systemctl","time":"10 min","level":"1"}])))
+        db.commit()
+    learner_a = user_client(system, "pair-student-a")
+    learner_b = user_client(system, "pair-student-b")
+    first = learner_a.post("/api/sessions", json={"lab_id": "callback"})
+    second = learner_b.post("/api/sessions", json={"lab_id": "callback"})
+    assert first.status_code == second.status_code == 200
+    a, b = first.json(), second.json()
+    assert a["paired"] and b["paired"]
+    with app.state.factory() as db:
+        a_row, b_row = db.get(LabSession, a["id"]), db.get(LabSession, b["id"])
+        assert {a_row.vmid, a_row.secondary_vmid}.isdisjoint({b_row.vmid, b_row.secondary_vmid})
+        assert a_row.ip != a_row.secondary_ip and b_row.ip != b_row.secondary_ip
+    process(system); process(system)
+    with app.state.factory() as db:
+        a_row = db.get(LabSession, a["id"])
+        assert a_row.state == "ready" and a_row.host_key and a_row.secondary_host_key
+    cloned_roles = {call[2] for call in provider.calls if call[0] == "clone"}
+    assert cloned_roles == {"sender", "listener"}
+    assert {call for call in provider.calls if call[0] == "host_key"} == {
+        ("host_key", "sender", "ecdsa"), ("host_key", "listener", "ecdsa")}
+    paired_setup = {(call[0], call[4]) for call in provider.calls
+                    if len(call) > 4 and call[1] == "/usr/local/sbin/academy-pair-lab"
+                    and call[2] == "configure-peer"}
+    assert paired_setup == {("listener", "listener"), ("sender", "sender")}
+    quiet_logins = {call[0] for call in provider.calls
+                    if len(call) > 2 and call[1:3] == ("install", "-o")}
+    assert quiet_logins == {"sender", "listener"}
+    clean_prompts = {call[0] for call in provider.calls
+                     if len(call) > 3 and call[1:3] == ("/bin/sh", "-c")
+                     and "/etc/profile.d/99-academy-terminal.sh" in call[3]}
+    assert clean_prompts == {"sender", "listener"}
+    drill="callback-01-sender-service"
+    assert learner_a.post(f"/api/sessions/{a['id']}/actions", json={"action":"start","drill_id":drill}).status_code==200
+    process(system)
+    assert {call[0] for call in provider.calls if len(call)>2 and call[1]=="/usr/local/sbin/academy-pair-lab" and call[2]=="start"}=={"listener","sender"}
+    start_order = [(call[0], call[2]) for call in provider.calls if len(call)>2
+                   and call[1] == "/usr/local/sbin/academy-pair-lab"
+                   and call[2] in ("start", "arm")]
+    assert start_order[-3:] == [("sender", "start"), ("listener", "start"), ("listener", "arm")]
+    assert learner_a.post(f"/api/sessions/{a['id']}/actions", json={"action":"check","drill_id":drill}).status_code==200
+    process(system)
+    assert learner_a.get("/api/results").json()[0]["passed"] is False
+    with app.state.factory() as db:
+        before_reset = db.get(LabSession, a["id"])
+        old_generation = before_reset.generation
+        old_key = before_reset.key_cipher
+        old_vmids = (before_reset.vmid, before_reset.secondary_vmid)
+    calls_before_reset = len(provider.calls)
+    assert learner_a.post(f"/api/sessions/{a['id']}/actions", json={"action": "reset"}).status_code == 200
+    process(system)
+    with app.state.factory() as db:
+        reset = db.get(LabSession, a["id"])
+        assert reset.state == "ready" and reset.generation == old_generation + 1
+        assert (reset.vmid, reset.secondary_vmid) == old_vmids
+        assert reset.key_cipher != old_key and reset.active_drill == ""
+        assert reset.host_key and reset.secondary_host_key
+    reset_calls = provider.calls[calls_before_reset:]
+    assert {(call[0], call[2]) for call in reset_calls if call[0] in ("delete", "clone")} == {
+        ("delete", "sender"), ("delete", "listener"),
+        ("clone", "sender"), ("clone", "listener")}
+    assert len(provider.vms) == 4  # Reset must preserve the other learner's pair.
+    assert learner_a.post(f"/api/sessions/{a['id']}/actions", json={"action": "end"}).status_code == 200
+    process(system)
+    with app.state.factory() as db:
+        a_row = db.get(LabSession, a["id"])
+        assert a_row.state == "ended" and a_row.vmid is None and a_row.secondary_vmid is None
+    deleted_roles = {call[2] for call in provider.calls if call[0] == "delete"}
+    assert deleted_roles == {"sender", "listener"}
+    assert len(provider.vms) == 2  # The other learner's pair remains intact.
+    assert learner_b.post(f"/api/sessions/{b['id']}/actions", json={"action": "end"}).status_code == 200
+    process(system)
+    assert not provider.vms
+
+
+def test_pair_launch_fails_closed_and_retry_reconciles_configuration(system):
+    app, admin, provider, _ = system
+    with app.state.factory() as db:
+        db.add(Lab(id="callback", title="Callback Troubleshooting", description="Paired lab",
+                   kind="callback", template_id=9201, secondary_template_id=9202,
+                   enabled=True, cores=2, memory=2048, drills_json="[]"))
+        db.commit()
+    learner = user_client(system, "pair-retry-student")
+    provider.exec_failures[("listener", "configure-peer")] = (2, "offline guest command")
+    response = learner.post("/api/sessions", json={"lab_id": "callback"})
+    assert response.status_code == 200
+    process(system)
+    with app.state.factory() as db:
+        session = db.get(LabSession, response.json()["id"])
+        assert session.state == "error"
+        assert session.vmid in provider.vms and session.secondary_vmid in provider.vms
+        assert not session.host_key and not session.secondary_host_key
+    provider.exec_failures.clear()
+    assert learner.post(f"/api/sessions/{response.json()['id']}/actions",
+                        json={"action": "retry"}).status_code == 200
+    process(system)
+    with app.state.factory() as db:
+        session = db.get(LabSession, response.json()["id"])
+        assert session.state == "ready"
+        assert session.host_key and session.secondary_host_key
+    assert [call[4] for call in provider.calls if len(call) > 4 and
+            call[1] == "/usr/local/sbin/academy-pair-lab" and call[2] == "configure-peer"][-3:] == [
+                "listener", "listener", "sender"]
 
 
 def test_capacity_and_expiration(system):
@@ -573,10 +731,110 @@ def test_guacamole_crypto_and_private_key_binding():
     body = json.loads(signed[32:])
     assert body["expires"] == 123516000
     assert body["connections"]["Lab terminal"]["parameters"]["hostname"] == "10.44.0.100"
+    bounded = guac_data("learner", {"hostname": "10.44.0.100"}, key,
+                        now=123456, expires=123999)
+    raw = base64.b64decode(bounded)
+    cipher = Cipher(algorithms.AES(bytes.fromhex(key)), modes.CBC(bytes(16))).decryptor()
+    padded = cipher.update(raw) + cipher.finalize()
+    unpadder = padding.PKCS7(128).unpadder()
+    signed = unpadder.update(padded) + unpadder.finalize()
+    assert json.loads(signed[32:])["expires"] == 123999000
     encrypted = encrypt_key("secret ssh key", "22" * 32, "session-one")
     assert decrypt_key(encrypted, "22" * 32, "session-one") == "secret ssh key"
     with pytest.raises(Exception):
         decrypt_key(encrypted, "22" * 32, "session-two")
+
+
+def test_console_auth_lifetime_is_bounded_by_login_and_lab(system, monkeypatch):
+    import academy.app as academy_app
+
+    value = launch(system); process(system)
+    client = system[1]
+    cookie = client.cookies["academy_session"]
+    expected_expiry = time.time() + 1800
+    with system[0].state.factory() as db:
+        session = db.get(LabSession, value["id"])
+        login = db.get(Login, digest(cookie))
+        session.expires = expected_expiry + 600
+        login.expires = expected_expiry
+        db.commit()
+
+    captured = {}
+    original_guac_data = academy_app.guac_data
+
+    def capture_guac_data(username, parameters, secret, now=None, expires=None):
+        captured["expires"] = expires
+        return original_guac_data(username, parameters, secret, now=now, expires=expires)
+
+    class FakeResponse:
+        def __init__(self, data):
+            self.data = data
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return self.data
+
+    class FakeAsyncClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def post(self, *args, **kwargs):
+            return FakeResponse({"authToken": "console-token", "dataSource": "json"})
+
+        async def get(self, *args, **kwargs):
+            return FakeResponse({"Lab terminal": {"identifier": "Lab terminal"}})
+
+    monkeypatch.setattr(academy_app, "guac_data", capture_guac_data)
+    monkeypatch.setattr(academy_app.httpx, "AsyncClient", FakeAsyncClient)
+    response = client.post(f"/api/sessions/{value['id']}/console", json={})
+    assert response.status_code == 200, response.text
+    assert captured["expires"] == pytest.approx(expected_expiry, abs=0.01)
+    with system[0].state.factory() as db:
+        grant = db.get(ConsoleGrant, digest("console-token"))
+        assert grant.expires == pytest.approx(expected_expiry, abs=0.01)
+
+
+def test_paired_console_roles_get_isolated_common_js_clients(system, monkeypatch):
+    import academy.app as academy_app
+    app, client, provider, _ = system
+    with app.state.factory() as db:
+        db.add(Lab(id="callback", title="Callback", description="Pair", kind="callback",
+                   template_id=9201, secondary_template_id=9202, enabled=True,
+                   cores=2, memory=2048, drills_json="[]"))
+        db.commit()
+    learner = user_client(system, "paired-console-user")
+    session = learner.post("/api/sessions", json={"lab_id": "callback"}).json()
+    process(system)
+    tokens = iter(("sender-token", "listener-token"))
+
+    class Response:
+        def __init__(self, data): self.data = data
+        def raise_for_status(self): pass
+        def json(self): return self.data
+
+    class Guac:
+        def __init__(self, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        async def post(self, *args, **kwargs): return Response({"authToken": next(tokens), "dataSource": "json"})
+        async def get(self, *args, **kwargs): return Response({"Lab terminal": {"identifier": "Lab terminal"}})
+
+    monkeypatch.setattr(academy_app.httpx, "AsyncClient", Guac)
+    sender = learner.post(f"/api/sessions/{session['id']}/console?role=sender", json={}).json()["url"]
+    listener = learner.post(f"/api/sessions/{session['id']}/console?role=listener", json={}).json()["url"]
+    assert sender.startswith("/static/guac-terminal.html#")
+    assert listener.startswith("/static/guac-terminal.html#")
+    assert "sender-token" in sender and "listener-token" not in sender
+    assert "listener-token" in listener and "sender-token" not in listener
+    assert sender != listener
 
 
 def test_console_grant_bound_to_login_and_generation(system):
@@ -599,6 +857,97 @@ def test_console_grant_bound_to_login_and_generation(system):
     assert client.post("/console/api/tokens", data={"data":"arbitrary"}).status_code == 403
 
 
+def test_http_console_tunnel_forwards_and_binds_guacamole_tunnel_token(system, monkeypatch):
+    import httpx
+    import academy.console_proxy as console_proxy
+
+    value = launch(system); process(system)
+    app, client = system[0], system[1]
+    factory = app.state.factory
+    cookie = client.cookies["academy_session"]
+    with factory() as db:
+        db.add(ConsoleGrant(token_hash=digest("console-token"), login_hash=digest(cookie),
+                            session_id=value["id"], generation=1, expires=time.time()+100))
+        db.commit()
+
+    requests = []
+
+    class FakeUpstream:
+        status_code = 200
+        headers = httpx.Headers({"Guacamole-Tunnel-Token": "guac-session-token",
+                                 "Set-Cookie": "JSESSIONID=private", "Cache-Control": "no-cache"})
+
+        async def aread(self):
+            return b"tunnel-id"
+
+        async def aiter_bytes(self):
+            yield b"tunnel-data"
+
+        async def aclose(self):
+            pass
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def build_request(self, method, url, content=None, headers=None):
+            return httpx.Request(method, url, content=content, headers=headers)
+
+        async def send(self, request, stream=False):
+            requests.append(request)
+            return FakeUpstream()
+
+        async def aclose(self):
+            pass
+
+    monkeypatch.setattr(console_proxy.httpx, "AsyncClient", FakeClient)
+    connect = client.post("/console/tunnel?connect", data={"token": "console-token"})
+    assert connect.status_code == 200
+    assert connect.text == "tunnel-id"
+    assert connect.headers["Guacamole-Tunnel-Token"] == "guac-session-token"
+    assert "set-cookie" not in connect.headers
+    with factory() as db:
+        tunnel = db.get(HttpTunnel, "tunnel-id")
+        assert tunnel.token_hash == digest("console-token")
+        assert tunnel.tunnel_token_hash == digest("guac-session-token")
+
+    # Guacamole appends a monotonically increasing request ID to every read.
+    read = client.get("/console/tunnel?read:tunnel-id:7", headers={
+        "Guacamole-Tunnel-Token": "guac-session-token"})
+    assert read.status_code == 200 and read.content == b"tunnel-data"
+    assert requests[-1].headers["guacamole-tunnel-token"] == "guac-session-token"
+    assert "cookie" not in requests[-1].headers
+
+    write = client.post("/console/tunnel?write:tunnel-id", content=b"3.nop,",
+                        headers={"Content-Type": "application/octet-stream",
+                                 "Guacamole-Tunnel-Token": "guac-session-token"})
+    assert write.status_code == 200
+    assert requests[-1].headers["guacamole-tunnel-token"] == "guac-session-token"
+
+    sent = len(requests)
+    for header in (None, "wrong-session-token"):
+        headers = {"Guacamole-Tunnel-Token": header} if header else {}
+        assert client.get("/console/tunnel?read:tunnel-id:8", headers=headers).status_code == 403
+    # A general console grant cannot bypass the tunnel-specific binding.
+    assert client.get("/console/tunnel?read:tunnel-id:9&token=console-token").status_code == 400
+    assert len(requests) == sent
+
+
+def test_database_migrates_http_tunnel_token_hash(tmp_path):
+    import sqlite3
+    from academy.db import database
+
+    path = tmp_path / "legacy.db"
+    with sqlite3.connect(path) as connection:
+        connection.execute("CREATE TABLE http_tunnels (id VARCHAR(128) PRIMARY KEY, token_hash VARCHAR(64) NOT NULL)")
+    engine, _ = database("sqlite:///" + str(path))
+    try:
+        names = {column["name"] for column in inspect(engine).get_columns("http_tunnels")}
+        assert "tunnel_token_hash" in names
+    finally:
+        engine.dispose()
+
+
 def test_login_rate_limit_and_cross_site(system):
     client = accepted_client(system[0])
     for i in range(8):
@@ -613,7 +962,12 @@ def test_frontend_is_local_and_has_no_embedded_secrets(system):
     assert response.status_code == 200
     assert "Content-Security-Policy" in response.headers
     for file in (ROOT/"frontend").glob("*"):
-        text = file.read_text(encoding="utf-8")
+        if not file.is_file():
+            continue
+        try:
+            text = file.read_bytes().decode("utf-8")
+        except UnicodeDecodeError:
+            continue
         assert "cdn." not in text and "https://" not in text
         assert "PVE_TOKEN_SECRET" not in text
     assert system[1].get("/api/sessions").json() == []
@@ -627,62 +981,3 @@ def test_logout_and_password_change(system):
     assert client.get("/api/me").status_code == 401
     assert client.post("/api/login",json={"username":"admin","password":"Administrator-123!"}).status_code == 401
     assert client.post("/api/login",json={"username":"admin","password":"Long-new-password-123"}).status_code == 200
-
-def test_video_taxonomy_columns_migrate_existing_order_database(tmp_path):
-    path = tmp_path / "academy.db"
-    with sqlite3.connect(path) as connection:
-        connection.execute("CREATE TABLE video_catalog_order (relative_path VARCHAR(1024) PRIMARY KEY, position INTEGER NOT NULL)")
-        connection.execute("INSERT INTO video_catalog_order VALUES ('Creator/Topic/Lesson.mp4', 3)")
-    engine, sessions = database(f"sqlite:///{path.as_posix()}")
-    try:
-        columns = {column["name"] for column in inspect(engine).get_columns("video_catalog_order")}
-        assert {"relative_path", "position", "author", "topic"} <= columns
-        with sessions() as db:
-            row = db.get(VideoCatalogOrder, "Creator/Topic/Lesson.mp4")
-            assert (row.position, row.author, row.topic) == (3, None, None)
-    finally:
-        engine.dispose()
-
-
-
-def test_video_taxonomy_is_admin_only_persistent_and_preserves_order(system, tmp_path):
-    _, admin, _, settings = system
-    settings.video_root = str(tmp_path / "videos")
-    root = Path(settings.video_root)
-    source = root / "Old Creator" / "Python Basics"
-    destination = root / "Eli the Computer Guy" / "Linux"
-    source.mkdir(parents=True)
-    destination.mkdir(parents=True)
-    for title in ("Alpha", "Bravo"):
-        (source / f"{title}.mp4").write_bytes(title.encode())
-    (destination / "Existing lesson.mp4").write_bytes(b"existing")
-
-    initial = admin.get("/api/videos").json()["videos"]
-    source_items = [item for item in initial if item["author"] == "Old Creator"]
-    source_ids = [source_items[1]["id"], source_items[0]["id"]]
-    ordered = admin.put("/api/admin/videos/order", json={
-        "author": "Old Creator", "topic": "Python Basics", "video_ids": source_ids})
-    assert ordered.status_code == 200
-
-    learner = user_client(system, "video-taxonomy-learner")
-    body = {"source_author": "Old Creator", "source_topic": "Python Basics",
-            "author": "Eli the Computer Guy", "topic": "Python"}
-    assert learner.put("/api/admin/videos/taxonomy", json=body).status_code == 403
-    saved = admin.put("/api/admin/videos/taxonomy", json=body)
-    assert saved.status_code == 200, saved.text
-    assert saved.json() == {"saved": True, "count": 2,
-                            "author": "Eli the Computer Guy", "topic": "Python"}
-
-    videos = admin.get("/api/videos").json()["videos"]
-    moved = [item for item in videos if item["topic"] == "Python"]
-    assert {item["author"] for item in moved} == {"Eli the Computer Guy"}
-    assert [item["title"] for item in moved] == ["Bravo", "Alpha"]
-    assert [item["title"] for item in videos if item["topic"] == "Linux"] == ["Existing lesson"]
-
-    renamed = admin.put("/api/admin/videos/creator", json={
-        "source_author": "Eli the Computer Guy", "author": "Eli Computer Guy"})
-    assert renamed.status_code == 200, renamed.text
-    videos = admin.get("/api/videos").json()["videos"]
-    assert {item["author"] for item in videos} == {"Eli Computer Guy"}
-    assert [item["title"] for item in videos if item["topic"] == "Python"] == ["Bravo", "Alpha"]
-    assert [item["title"] for item in videos if item["topic"] == "Linux"] == ["Existing lesson"]

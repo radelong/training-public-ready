@@ -52,11 +52,12 @@ def new_ssh_key():
     return private, public
 
 
-def guac_data(username, parameters, secret, now=None):
+def guac_data(username, parameters, secret, now=None, expires=None):
     """Apache Guacamole JSON auth: HMAC + AES-128-CBC, IV=0, PKCS7."""
     key = bytes.fromhex(secret)
+    issued_at = time.time() if now is None else now
     payload = json.dumps({"username": username,
-                          "expires": int(((time.time() if now is None else now) + 60) * 1000),
+                          "expires": int((issued_at + 60 if expires is None else expires) * 1000),
                           "connections": {"Lab terminal": {"protocol": "ssh", "parameters": parameters}}},
                          separators=(",", ":")).encode()
     signed = hmac.new(key, payload, hashlib.sha256).digest() + payload

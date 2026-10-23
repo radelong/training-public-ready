@@ -17,12 +17,15 @@ def execute_job(factory, settings, provider, job_id):
         job.state, job.updated = "running", time.time()
         db.commit()
         try:
+            roles = ("sender", "listener") if session.secondary_vmid is not None else ("sender",)
             if job.action in ("launch", "reset", "retry"):
                 if job.action == "reset":
                     session.state, session.message = "resetting", "Restoring a clean VM"
                     db.commit()
-                    provider.delete(session)
-                    session.key_cipher, session.public_key, session.host_key = "", "", ""
+                    for role in roles:
+                        provider.delete(session, role=role)
+                    session.key_cipher, session.public_key = "", ""
+                    session.host_key, session.secondary_host_key = "", ""
                     session.active_drill = ""
                     session.generation += 1
                     db.commit()
@@ -33,24 +36,74 @@ def execute_job(factory, settings, provider, job_id):
                     db.commit()
                 session.state, session.message = "provisioning", "Preparing your lab VM"
                 db.commit()
-                if not provider.owned(session):
-                    provider.clone(session, lab)
-                # Wait for interrupted clone tasks before attempting configuration.
-                provider.wait_unlocked(session)
-                provider.configure(session, lab)
+                for role in roles:
+                    if not provider.owned(session, role=role):
+                        provider.clone(session, lab, role=role)
+                    # Reconcile each role independently after an interrupted clone task.
+                    provider.wait_unlocked(session, role=role)
+                    provider.configure(session, lab, role=role)
                 session.message = "Booting Ubuntu and checking the lab"
                 db.commit()
-                provider.boot(session)
-                session.host_key = provider.host_key(session)
+                for role in roles:
+                    provider.boot(session, role=role)
+                if lab.kind == "callback" and session.secondary_vmid is not None:
+                    pair_command = ["/usr/local/sbin/academy-pair-lab", "configure-peer", "configure-peer",
+                                    "listener", session.ip, session.secondary_ip]
+                    for role in ("listener", "sender"):
+                        pair_command[3] = role
+                        code, _output = provider.exec(session, pair_command, role=role)
+                        if code != 0:
+                            raise RuntimeError(f"Could not configure the paired heartbeat on the {role} VM")
+                        code, _output = provider.exec(session, ["install", "-o", "learner", "-g", "learner",
+                                                                "-m", "0644", "/dev/null",
+                                                                "/home/learner/.hushlogin"], role=role)
+                        if code != 0:
+                            raise RuntimeError(f"Could not prepare the {role} terminal")
+                        # Ubuntu 26.04 emits OSC 3008 shell context from profile.d.
+                        # Guacamole displays that metadata as text and moves the cursor.
+                        profile = ("printf '%s\\n' "
+                                   "'# Guacamole learner terminals do not use OSC 3008 context.' "
+                                   "'if [ \"${USER:-}\" = \"learner\" ]; then' "
+                                   "'    unset PROMPT_COMMAND PS0' "
+                                   "'fi' > /etc/profile.d/99-academy-terminal.sh")
+                        code, _output = provider.exec(session, ["/bin/sh", "-c", profile], role=role)
+                        if code != 0:
+                            raise RuntimeError(f"Could not disable shell context on the {role} terminal")
+                # Callback images offer ECDSA; the standard Academy images
+                # restrict SSH to RSA. Pin the key Guacamole negotiates.
+                host_algorithm = "ecdsa" if lab.kind == "callback" else "rsa"
+                session.host_key = provider.host_key(session, role="sender", algorithm=host_algorithm)
+                if session.secondary_vmid is not None:
+                    session.secondary_host_key = provider.host_key(session, role="listener", algorithm=host_algorithm)
                 session.state, session.message = "ready", "Your private lab is ready"
             elif job.action == "end":
                 session.state, session.message = "ending", "Releasing your VM"
                 db.commit()
-                provider.delete(session)
+                for role in roles:
+                    provider.delete(session, role=role)
                 session.state, session.message, session.vmid = "ended", "Lab ended; results saved", None
-                session.key_cipher, session.host_key = "", ""
+                session.secondary_vmid = None
+                session.key_cipher, session.host_key, session.secondary_host_key = "", "", ""
             elif job.action in ("start", "check", "hint", "solution"):
-                code, output = provider.exec(session, ["/usr/local/sbin/academy-lab", job.action, job.argument])
+                command = ["/usr/local/sbin/academy-lab", job.action, job.argument]
+                if lab.kind == "callback" and session.secondary_vmid is not None:
+                    targets = ("sender", "listener") if job.action in ("start", "check") else ("sender",)
+                    pair_command = ["/usr/local/sbin/academy-pair-lab", job.action, job.argument, "",
+                                    session.ip, session.secondary_ip]
+                    outcomes = [(role, *provider.exec(session, [*pair_command[:3], role, *pair_command[4:]], role=role))
+                                for role in targets]
+                    if job.action == "start" and not any(result != 0 for _, result, _ in outcomes):
+                        arm_command = ["/usr/local/sbin/academy-pair-lab", "arm", job.argument,
+                                       "listener", session.ip, session.secondary_ip]
+                        outcomes.append(("listener", *provider.exec(session, arm_command, role="listener")))
+                    if job.action == "check":
+                        code = next((result for _, result, _ in outcomes if result not in (0, 1)),
+                                    1 if any(result != 0 for _, result, _ in outcomes) else 0)
+                    else:
+                        code = next((result for _, result, _ in outcomes if result != 0), 0)
+                    output = "\n".join(f"{role.title()}: {message}" for role, _, message in outcomes)
+                else:
+                    code, output = provider.exec(session, command)
                 job.message = output
                 if job.action == "start":
                     if code:

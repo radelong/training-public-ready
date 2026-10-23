@@ -28,16 +28,6 @@ from . import agreement
 from .videos import catalogue as video_catalogue, add_watched_range, watched_seconds
 
 
-class HtmlDocument(HTMLParser):
-    def __init__(self):
-        super().__init__(convert_charrefs=True)
-        self.has_html = False
-
-    def handle_starttag(self, tag, attrs):
-        if tag.casefold() == "html":
-            self.has_html = True
-
-
 class Credentials(BaseModel):
     username: str = Field(min_length=1, max_length=64)
     password: str = Field(min_length=1, max_length=128)
@@ -76,6 +66,7 @@ class Action(BaseModel):
 
 class LabUpdate(BaseModel):
     template_id: int = Field(ge=100, le=999999999)
+    secondary_template_id: int | None = Field(default=None, ge=100, le=999999999)
     enabled: bool
     cores: int = Field(ge=1, le=16)
     memory: int = Field(ge=1024, le=32768)
@@ -153,6 +144,35 @@ class BugReportSubmission(BaseModel):
         return value
 
 
+class HtmlDocument(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.has_html = False
+
+    def handle_starttag(self, tag, attrs):
+        if tag.casefold() == "html":
+            self.has_html = True
+
+
+def lab_duration(drills):
+    if not drills:
+        return None
+    total = 0
+    for drill in drills:
+        explicit = drill.get("estimated_minutes")
+        if type(explicit) is int and explicit > 0:
+            total += explicit
+            continue
+        value = drill.get("time", "")
+        if not isinstance(value, str):
+            return None
+        match = re.fullmatch(r"\s*(?:(\d+)\s*h(?:ours?)?)?\s*(?:(\d+)\s*m(?:in(?:utes?)?)?)?\s*", value, re.I)
+        if not match or not any(match.groups()):
+            return None
+        total += int(match.group(1) or 0) * 60 + int(match.group(2) or 0)
+    return total
+
+
 def create_app(settings=None, provider=None):
     s = settings or Settings()
     s.validate()
@@ -185,14 +205,8 @@ def create_app(settings=None, provider=None):
         response.headers["X-Frame-Options"] = "SAMEORIGIN"
         # Guacamole's Angular client compiles templates at runtime. Limit its
         # required unsafe-eval exception to the authenticated console path.
-        if re.fullmatch(r"/api/games/[a-f0-9]{32}/play", request.url.path):
-            response.headers["Content-Security-Policy"] = (
-                "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; "
-                "style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; "
-                "font-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'; "
-                "frame-ancestors 'self'")
-        else:
-            script_src = "'self' 'unsafe-eval'" if request.url.path.startswith("/console/") else "'self'"
+        script_src = "'self' 'unsafe-eval'" if request.url.path.startswith("/console/") else "'self'"
+        if "Content-Security-Policy" not in response.headers:
             response.headers["Content-Security-Policy"] = (
                 f"default-src 'self'; script-src {script_src}; style-src 'self' 'unsafe-inline'; "
                 "img-src 'self' data:; font-src 'self'; connect-src 'self' ws: wss:; "
@@ -249,8 +263,9 @@ def create_app(settings=None, provider=None):
         return value
 
     def session_view(value):
-        return {key: getattr(value, key) for key in
-                ("id", "lab_id", "state", "active_drill", "message", "created", "expires", "generation")}
+        return {**{key: getattr(value, key) for key in
+                   ("id", "lab_id", "state", "active_drill", "message", "created", "expires", "generation")},
+                "paired": value.secondary_vmid is not None}
 
     @app.get("/api/health")
     def health(db=Depends(get_db)):
@@ -418,7 +433,7 @@ def create_app(settings=None, provider=None):
         position_by_id = {video_id: position for position, video_id in enumerate(body.video_ids)}
         stored = {row.relative_path: row for row in db.scalars(
             select(VideoCatalogOrder).where(
-                VideoCatalogOrder.relative_path.in_([item.relative_path for item in group])))}
+                VideoCatalogOrder.relative_path.in_([item.relative_path for item in group]))) }
         for item in sorted(group, key=lambda value: value.relative_path):
             row = stored.get(item.relative_path)
             if row is None:
@@ -503,7 +518,7 @@ def create_app(settings=None, provider=None):
     @app.post("/api/videos/{video_id}/progress")
     def video_progress(video_id: str, body: VideoPosition,
                        auth=Depends(identity), db=Depends(get_db)):
-        items = video_catalogue(s.video_root)
+        items = ordered_video_catalogue(db)
         if items is None:
             raise HTTPException(503, "Video storage is unavailable")
         item = next((video for video in items if video.id == video_id), None)
@@ -545,8 +560,8 @@ def create_app(settings=None, provider=None):
                 "watched_percent": min(100, round(100 * watched / duration))}
 
     @app.api_route("/api/videos/{video_id}/stream", methods=["GET", "HEAD"])
-    def video_stream(video_id: str, auth=Depends(identity)):
-        items = video_catalogue(s.video_root)
+    def video_stream(video_id: str, auth=Depends(identity), db=Depends(get_db)):
+        items = ordered_video_catalogue(db)
         if items is None:
             raise HTTPException(503, "Video storage is unavailable")
         item = next((video for video in items if video.id == video_id), None)
@@ -638,10 +653,23 @@ def create_app(settings=None, provider=None):
 
     @app.get("/api/labs")
     def labs(auth=Depends(identity), db=Depends(get_db)):
-        return [{"id": l.id, "title": l.title, "description": l.description, "kind": l.kind,
-                 "enabled": l.enabled, "cores": l.cores, "memory": l.memory,
-                 "template_id": l.template_id if auth[0].role == "admin" else None,
-                 "drills": json.loads(l.drills_json)} for l in db.scalars(select(Lab).order_by(Lab.id))]
+        result = []
+        for lab in db.scalars(select(Lab).order_by(Lab.id)):
+            drills = json.loads(lab.drills_json)
+            topics = sorted({topic.strip() for drill in drills
+                             for topic in drill.get("topics", []) if isinstance(topic, str) and topic.strip()})
+            if not topics:
+                topics = {"netlab": ["IP routing", "Firewall troubleshooting", "Kubernetes networking"],
+                          "linux": ["Linux command line", "File and service administration"],
+                          "callback": ["Linux networking", "HTTP service troubleshooting", "Host firewalls"]}.get(lab.kind, ["Hands-on practice"])
+            result.append({"id": lab.id, "title": lab.title, "description": lab.description, "kind": lab.kind,
+                 "enabled": lab.enabled, "cores": lab.cores, "memory": lab.memory,
+                 "paired": lab.secondary_template_id is not None,
+                 "expected_minutes": lab_duration(drills), "key_topics": topics,
+                 "template_id": lab.template_id if auth[0].role == "admin" else None,
+                 "secondary_template_id": lab.secondary_template_id if auth[0].role == "admin" else None,
+                 "drills": drills})
+        return result
 
     @app.get("/api/sessions")
     def sessions(auth=Depends(identity), db=Depends(get_db)):
@@ -664,10 +692,20 @@ def create_app(settings=None, provider=None):
             raise HTTPException(409, "All lab seats are occupied; try again when a seat is released")
         if sum(v.user_id == auth[0].id for v in live) >= s.per_user:
             raise HTTPException(409, f"End a lab before opening another (limit: {s.per_user})")
-        used = {v.vmid for v in live}
-        slot = next(i for i in range(s.capacity) if s.first_vmid + i not in used)
+        used = {vmid for v in live for vmid in (v.vmid, v.secondary_vmid) if vmid is not None}
+        paired = lab.secondary_template_id is not None
+        if paired and s.capacity > 50:
+            raise HTTPException(409, "Paired labs require a capacity of 50 seats or fewer")
+        slot = next((i for i in range(s.capacity)
+                     if s.first_vmid + i not in used
+                     and (not paired or s.first_vmid + s.capacity + i not in used)), None)
+        if slot is None:
+            raise HTTPException(409, "No complete VM pair is available")
         value = LabSession(user_id=auth[0].id, lab_id=lab.id, vmid=s.first_vmid + slot,
-                           ip=f"{s.lab_prefix}.{100 + slot}", expires=time.time() + s.session_hours * 3600)
+                           secondary_vmid=s.first_vmid + s.capacity + slot if paired else None,
+                           ip=f"{s.lab_prefix}.{100 + slot}",
+                           secondary_ip=f"{s.lab_prefix}.{100 + s.capacity + slot}" if paired else "",
+                           expires=time.time() + s.session_hours * 3600)
         db.add(value)
         db.flush()
         db.add(Job(session_id=value.id, action="launch"))
@@ -733,17 +771,28 @@ def create_app(settings=None, provider=None):
             "Content-Disposition": 'attachment; filename="training-results.csv"'})
 
     @app.post("/api/sessions/{session_id}/console")
-    async def console(session_id: str, auth=Depends(identity), db=Depends(get_db)):
+    async def console(session_id: str, role: Literal["sender", "listener"] = "sender",
+                      auth=Depends(identity), db=Depends(get_db)):
         value = session_owned(db, session_id, auth[0])
-        if value.state != "ready" or value.expires < time.time() or not value.host_key:
+        paired = value.secondary_vmid is not None
+        if role == "listener" and not paired:
+            raise HTTPException(404, "Lab terminal not found")
+        host = value.secondary_ip if role == "listener" else value.ip
+        host_key = value.secondary_host_key if role == "listener" else value.host_key
+        if value.state != "ready" or value.expires < time.time() or not host_key:
             raise HTTPException(409, "Your lab console is not ready")
-        parameters = {"hostname": value.ip, "port": "22", "username": "learner",
+        parameters = {"hostname": host, "port": "22", "username": "learner",
                       "private-key": decrypt_key(value.key_cipher, s.master_key, value.id),
-                      "host-key": value.host_key, "font-name": "monospace", "font-size": "14",
+                      "host-key": host_key, "font-name": "monospace", "font-size": "14",
                       "color-scheme": "gray-black", "enable-sftp": "false", "server-alive-interval": "15"}
         if value.lab_id == "linux":
             parameters["command"] = "/usr/local/sbin/academy-lab shell"
-        encoded = guac_data(f"{auth[0].id}:{value.id}:{value.generation}", parameters, s.guac_key)
+        # Guacamole's own one-minute auth expiry disconnected healthy SSH consoles.
+        # Keep that credential no longer than the Academy login and lab session;
+        # the console proxy still enforces revocation and ownership on every request.
+        console_expires = min(value.expires, auth[1].expires)
+        encoded = guac_data(f"{auth[0].id}:{value.id}:{value.generation}", parameters,
+                            s.guac_key, expires=console_expires)
         try:
             async with httpx.AsyncClient(timeout=20) as client:
                 response = await client.post(s.guac_url + "/api/tokens", data={"data": encoded})
@@ -762,6 +811,12 @@ def create_app(settings=None, provider=None):
                               expires=min(value.expires, auth[1].expires)))
         db.commit()
         identifier = base64.b64encode(f"{connection_id}\0c\0{source}".encode()).decode()
+        if paired:
+            # Each full Guacamole web client shares same-origin browser storage.
+            # Two instances can overwrite auth state, so paired labs use the
+            # storage-free common-js client with its own role-scoped token.
+            embed = urlencode({"id": connection_id, "source": source, "token": token})
+            return {"url": f"/static/guac-terminal.html#{embed}"}
         return {"url": f"/console/#/client/{identifier}?{urlencode({'token': token})}"}
 
     @app.get("/api/admin/overview")
@@ -869,15 +924,29 @@ def create_app(settings=None, provider=None):
         lab = db.get(Lab, lab_id)
         if not lab:
             raise HTTPException(404, "Lab not found")
+        secondary_template_id = (body.secondary_template_id if "secondary_template_id" in body.model_fields_set
+                                 else lab.secondary_template_id)
+        if secondary_template_id == body.template_id:
+            raise HTTPException(422, "Sender and Listener require separate templates")
+        if body.enabled and lab.kind == "callback" and secondary_template_id is None:
+            raise HTTPException(409, "Configure the Listener template before activating this paired lab")
+        if db.scalars(select(LabSession).where(LabSession.lab_id == lab.id,
+                                                LabSession.state != "ended")).first() and (
+                lab.template_id != body.template_id or lab.secondary_template_id != secondary_template_id):
+            raise HTTPException(409, "End active lab sessions before changing their templates")
         if body.enabled:
             from .proxmox import Proxmox
             adapter = app.state.provider or Proxmox(s)
             candidate = Lab(template_id=body.template_id)
             try:
                 adapter.template_ready(candidate)
+                if secondary_template_id is not None:
+                    adapter.template_ready(Lab(template_id=secondary_template_id))
             except Exception:
                 raise HTTPException(409, "Proxmox template verification failed; check configuration and node logs")
-        for key, val in body.model_dump().items():
+        values = body.model_dump(exclude_unset=True)
+        values["secondary_template_id"] = secondary_template_id
+        for key, val in values.items():
             setattr(lab, key, val)
         db.add(Audit(user_id=auth[0].id, action="configure_lab", target=lab.id))
         db.commit()
@@ -905,7 +974,7 @@ def create_app(settings=None, provider=None):
         app.mount("/static", StaticFiles(directory=s.static_dir), name="static")
 
         public_pages = {"/": "home.html", "/about": "about.html", "/terms": "terms.html"}
-        protected_pages = {"/labs", "/classes", "/videos", "/games", "/sessions", "/results",
+        protected_pages = {"/labs", "/lab-guide", "/classes", "/videos", "/games", "/sessions", "/results",
                            "/account", "/content", "/admin", "/bug-report",
                            "/admin/bug-reports"}
 

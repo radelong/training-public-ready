@@ -13,7 +13,7 @@ from fastapi import Depends, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field, model_validator, ValidationError
 from sqlalchemy import select, func
-from .db import (Course, CourseVersion, ContentAsset, CourseProgress, ExamAttempt,
+from .db import (Course, CourseVersion, ContentAsset, CourseProgress, ModuleQuizAttempt, ProgressTestAttempt, ExamAttempt,
                  Lab, User, Audit, allocation_lock, uid)
 
 MAX_PDF = 50 * 1024 * 1024
@@ -24,9 +24,29 @@ class Module(BaseModel):
     id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
     title: str = Field(min_length=1, max_length=180)
     description: str = Field(default="", max_length=10000)
+    estimated_minutes: int | None = Field(default=None, ge=1, le=1440)
+    topics: list[str] = Field(default_factory=list, max_length=20)
     asset_id: str | None = Field(default=None, max_length=36)
     lab_id: str | None = Field(default=None, max_length=64)
+    quiz: list[dict] = Field(default_factory=list, max_length=100)
     required: bool = True
+
+    @model_validator(mode="after")
+    def validate_topics(self):
+        if any(not topic.strip() or len(topic) > 120 for topic in self.topics):
+            raise ValueError("Module topics must be non-empty and at most 120 characters")
+        questions = []
+        seen = set()
+        for raw in self.quiz:
+            question = Question.model_validate(raw)
+            if question.type == "written":
+                raise ValueError("Module quizzes support only automatically graded objective questions")
+            if question.id in seen:
+                raise ValueError("Module quiz question IDs must be unique")
+            seen.add(question.id)
+            questions.append(question.model_dump())
+        self.quiz = questions
+        return self
 
 
 class Question(BaseModel):
@@ -60,6 +80,7 @@ class Question(BaseModel):
 
 class Exam(BaseModel):
     instructions: str = Field(default="", max_length=10000)
+    estimated_minutes: int | None = Field(default=None, ge=1, le=600)
     passing_score: int = Field(default=80, ge=1, le=100)
     max_attempts: int = Field(default=3, ge=1, le=20)
     require_modules: bool = True
@@ -70,7 +91,9 @@ class Exam(BaseModel):
 class CourseContent(BaseModel):
     title: str = Field(min_length=1, max_length=180)
     description: str = Field(default="", max_length=10000)
+    category: Literal["Networking", "Security", "Linux", "Programming", "Cloud", "AI", "Other"] | None = None
     modules: list[Module] = Field(default_factory=list, max_length=100)
+    progress_test_enabled: bool = False
     exam: Exam = Field(default_factory=Exam)
 
     @model_validator(mode="after")
@@ -78,6 +101,17 @@ class CourseContent(BaseModel):
         for collection in (self.modules, self.exam.questions):
             if len({v.id for v in collection}) != len(collection):
                 raise ValueError("Module and question IDs must be unique within their lists")
+        progress_questions = [q for module in self.modules for q in module.quiz]
+        if self.progress_test_enabled:
+            if len({q["id"] for q in progress_questions}) != len(progress_questions):
+                raise ValueError("Pretest question IDs must be unique across the class")
+            exam_prompts = {" ".join(q.prompt.casefold().split()) for q in self.exam.questions}
+            if any(" ".join(q["prompt"].casefold().split()) in exam_prompts for q in progress_questions):
+                raise ValueError("Pretest questions must differ from final exam questions")
+            if any(len(module.quiz) < 8 for module in self.modules):
+                raise ValueError("Add at least eight pretest questions to every module")
+            if len(progress_questions) > 200:
+                raise ValueError("A class pretest can contain at most 200 questions")
         if not self.title.strip():
             raise ValueError("A class title is required")
         return self
@@ -112,14 +146,19 @@ class NewLab(BaseModel):
     id: str = Field(pattern=r"^[a-z][a-z0-9-]{1,63}$")
     title: str = Field(min_length=1, max_length=128)
     description: str = Field(default="", max_length=10000)
-    kind: Literal["netlab", "linux", "custom"] = "custom"
+    kind: Literal["netlab", "linux", "networking", "security", "cloud", "programming", "callback", "custom"] = "custom"
     template_id: int = Field(ge=100, le=999999999)
+    secondary_template_id: int | None = Field(default=None, ge=100, le=999999999)
     cores: int = Field(default=2, ge=1, le=16)
     memory: int = Field(default=2048, ge=1024, le=32768)
     drills: list[dict] = Field(default_factory=list, max_length=200)
 
     @model_validator(mode="after")
     def valid_drills(self):
+        if self.secondary_template_id == self.template_id:
+            raise ValueError("Sender and Listener require separate templates")
+        if self.kind == "callback" and self.secondary_template_id is None:
+            raise ValueError("The callback lab requires separate Sender and Listener templates")
         seen = set()
         for drill in self.drills:
             if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", str(drill.get("id", ""))) or drill["id"] in seen:
@@ -132,15 +171,31 @@ class NewLab(BaseModel):
 
 
 class LabPackageReceipt(NewLab):
-    schema_version: Literal[1]
-    package_format: Literal["academy-lab-package-v1"]
+    schema_version: Literal[1, 2]
+    package_format: Literal["academy-lab-package-v1", "academy-lab-package-v2"]
     disk_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    secondary_disk_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     activate: bool = False
+
+    @model_validator(mode="after")
+    def valid_package_version(self):
+        paired = self.secondary_template_id is not None
+        if (self.schema_version == 2) != (self.package_format == "academy-lab-package-v2"):
+            raise ValueError("Package schema and format version must match")
+        if paired != (self.secondary_disk_sha256 is not None):
+            raise ValueError("Paired packages require a secondary image checksum")
+        if paired and self.schema_version != 2:
+            raise ValueError("Paired packages require schema version 2")
+        return self
 
 
 def learner_content(content):
     # Explicit allowlist: answer keys and rubrics never travel in learner lessons.
     content = json.loads(json.dumps(content))
+    for module in content["modules"]:
+        module["quiz"] = [
+            {k: q[k] for k in ("id", "type", "prompt", "choices", "points")}
+            for q in module.get("quiz", [])]
     content["exam"]["questions"] = [
         {k: q[k] for k in ("id", "type", "prompt", "choices", "points")}
         for q in content["exam"]["questions"]]
@@ -197,6 +252,11 @@ def mount_learning(app, factory, settings, identity, administrator, get_db):
             raise HTTPException(422, "Publishing requires at least one module and one final exam question")
         if publishing and any(q.type != 'written' and not q.explanation.strip() for q in content.exam.questions):
             raise HTTPException(422, "Add an explanation for every objective question before publishing")
+        if publishing and any(not question.get("explanation", "").strip()
+                              for module in content.modules for question in module.quiz):
+            raise HTTPException(422, "Add an explanation for every module question before publishing")
+        if publishing and content.progress_test_enabled and any(len(module.quiz) < 8 for module in content.modules):
+            raise HTTPException(422, "Add at least eight pretest questions to every module before publishing")
 
     def draft_view(c):
         return {"id": c.id, "revision": c.revision, "published_id": c.published_id,
@@ -232,6 +292,74 @@ def mount_learning(app, factory, settings, identity, administrator, get_db):
         result['questions'].sort(key=lambda q: positions.get(q['id'], len(positions)))
         return result
 
+    def module_quiz_attempt(db, aid, user):
+        value = db.get(ModuleQuizAttempt, aid)
+        if not value or value.user_id != user.id:
+            raise HTTPException(404, "Module quiz attempt not found")
+        return value
+
+    def progress_test_attempt(db, aid, user):
+        value = db.get(ProgressTestAttempt, aid)
+        if not value or value.user_id != user.id:
+            raise HTTPException(404, "Progress test attempt not found")
+        return value
+
+    def progress_questions(content):
+        return [(module, question) for module in content["modules"]
+                for question in module.get("quiz", [])]
+
+    def progress_test_view(db, attempt):
+        content = content_of(db.get(CourseVersion, attempt.version_id))
+        pairs = progress_questions(content)
+        questions = [{**{k: q[k] for k in ("id", "type", "prompt", "choices", "points")},
+                      "module_id": module["id"], "module_title": module["title"]}
+                     for module, q in pairs]
+        result = {"id": attempt.id, "version_id": attempt.version_id, "status": attempt.status,
+                  "score": attempt.score, "answers": json.loads(attempt.answers_json),
+                  "questions": questions}
+        if attempt.status != "in_progress":
+            result["marks"] = json.loads(attempt.marks_json)
+            result["module_results"] = json.loads(attempt.module_results_json)
+            result["correct_answers"] = {q["id"]: q["correct"] for _, q in pairs}
+            answers = json.loads(attempt.answers_json)
+            for question, (_, original) in zip(questions, pairs):
+                selected = answers.get(question["id"])
+                options = original.get("choice_explanations", [])
+                question["explanation"] = original.get("explanation", "")
+                question["selected_explanation"] = (options[selected] if type(selected) is int
+                                                       and selected < len(options) else "")
+        positions = {qid: i for i, qid in enumerate(json.loads(attempt.question_order_json))}
+        result["questions"].sort(key=lambda q: positions.get(q["id"], len(positions)))
+        return result
+
+    def module_quiz_view(db, attempt, user):
+        content = content_of(db.get(CourseVersion, attempt.version_id))
+        module = next((m for m in content["modules"] if m["id"] == attempt.module_id), None)
+        if not module:
+            raise HTTPException(404, "Module quiz not found")
+        questions = module.get("quiz", [])
+        result = {"id": attempt.id, "version_id": attempt.version_id,
+                  "module_id": attempt.module_id, "module_title": module["title"],
+                  "status": attempt.status, "score": attempt.score, "passed": attempt.passed,
+                  "passing_score": 80, "answers": json.loads(attempt.answers_json),
+                  "questions": [{k: q[k] for k in ("id", "type", "prompt", "choices", "points")}
+                                 for q in questions]}
+        if attempt.status != "in_progress":
+            answers = json.loads(attempt.answers_json)
+            result["marks"] = json.loads(attempt.marks_json)
+            result["correct_answers"] = {q["id"]: q["correct"] for q in questions}
+            for question in result["questions"]:
+                original = next(q for q in questions if q["id"] == question["id"])
+                selected = answers.get(question["id"])
+                options = original.get("choice_explanations", [])
+                question["explanation"] = original.get("explanation", "")
+                question["selected_explanation"] = (options[selected] if type(selected) is int
+                                                       and selected < len(options) else "")
+        order = json.loads(attempt.question_order_json)
+        positions = {qid: i for i, qid in enumerate(order)}
+        result["questions"].sort(key=lambda q: positions.get(q["id"], len(positions)))
+        return result
+
     @app.get("/api/courses")
     def classes(auth=Depends(identity), db=Depends(get_db)):
         result = []
@@ -239,8 +367,23 @@ def mount_learning(app, factory, settings, identity, administrator, get_db):
             v = db.get(CourseVersion, c.published_id)
             data = content_of(v)
             p = progress(db, v.id, auth[0])
+            category = data.get("category") or next(
+                (name for name in ("Networking", "Security", "Linux", "Programming", "Cloud", "AI")
+                 if name.casefold() in data["title"].casefold()), "Other")
+            if category == "Other" and "python" in data["title"].casefold():
+                category = "Programming"
+            module_durations = [module.get("estimated_minutes") for module in data["modules"]]
+            exam_duration = data["exam"].get("estimated_minutes")
+            expected_minutes = (sum(module_durations) + exam_duration
+                                if exam_duration is not None and all(value is not None for value in module_durations)
+                                else None)
+            topics = sorted({topic.strip() for module in data["modules"]
+                             for topic in module.get("topics", []) if topic.strip()})
             result.append({"id": c.id, "version_id": v.id, "number": v.number, "title": data["title"],
+                           "category": category,
                            "description": data["description"], "module_count": len(data["modules"]),
+                           "pretest_enabled": bool(data.get("progress_test_enabled")),
+                           "estimated_minutes": expected_minutes, "key_topics": topics,
                            "completed": len(json.loads(p.completed_json)) if p else 0})
         return result
 
@@ -341,10 +484,28 @@ def mount_learning(app, factory, settings, identity, administrator, get_db):
     @app.get("/api/course-versions/{vid}")
     def lesson(vid: str, auth=Depends(identity), db=Depends(get_db)):
         v = version(db, vid, auth[0]); p = progress(db, vid, auth[0])
+        quiz_results = {}
+        for attempt in db.scalars(select(ModuleQuizAttempt).where(
+                ModuleQuizAttempt.version_id == vid, ModuleQuizAttempt.user_id == auth[0].id)
+                .order_by(ModuleQuizAttempt.created.desc())):
+            if attempt.module_id not in quiz_results:
+                quiz_results[attempt.module_id] = {"attempt_id": attempt.id, "status": attempt.status,
+                                                   "score": attempt.score, "passed": bool(attempt.passed),
+                                                   "best_score": attempt.score}
+            else:
+                item = quiz_results[attempt.module_id]
+                item["passed"] = item["passed"] or bool(attempt.passed)
+                if attempt.score is not None:
+                    item["best_score"] = max(item["best_score"] or 0, attempt.score)
+        progress_attempts = list(db.scalars(select(ProgressTestAttempt).where(
+            ProgressTestAttempt.version_id == vid, ProgressTestAttempt.user_id == auth[0].id)
+            .order_by(ProgressTestAttempt.created.desc())))
         return {"id": v.id, "course_id": v.course_id, "number": v.number,
                 "content": learner_content(content_of(v)),
                 "completed": json.loads(p.completed_json) if p else [],
                 "current_module": p.current_module if p else "",
+                "module_quiz_results": quiz_results,
+                "progress_test_attempt": progress_test_view(db, progress_attempts[0]) if progress_attempts else None,
                 "attempts": [attempt_view(db, a, auth[0]) for a in db.scalars(select(ExamAttempt).where(
                     ExamAttempt.version_id == vid, ExamAttempt.user_id == auth[0].id).order_by(ExamAttempt.created.desc()))]}
 
@@ -361,9 +522,15 @@ def mount_learning(app, factory, settings, identity, administrator, get_db):
         allocation_lock(db); v = version(db, vid, auth[0]); p = progress(db, vid, auth[0])
         if not p:
             raise HTTPException(409, "Open the class before recording progress")
-        if body.module_id not in {m["id"] for m in content_of(v)["modules"]}:
+        module = next((m for m in content_of(v)["modules"] if m["id"] == body.module_id), None)
+        if not module:
             raise HTTPException(422, "Module not found")
+        content = content_of(v)
         completed = set(json.loads(p.completed_json))
+        if body.complete and not content.get("progress_test_enabled") and module.get("quiz") and not db.scalars(select(ModuleQuizAttempt).where(
+                ModuleQuizAttempt.version_id == vid, ModuleQuizAttempt.module_id == body.module_id,
+                ModuleQuizAttempt.user_id == auth[0].id, ModuleQuizAttempt.passed.is_(True))).first():
+            raise HTTPException(409, "Pass this module's quiz before marking it complete")
         if body.complete: completed.add(body.module_id)
         p.completed_json, p.current_module = json.dumps(sorted(completed)), body.module_id
         db.commit(); return {"completed": sorted(completed), "current_module": p.current_module}
@@ -409,6 +576,129 @@ def mount_learning(app, factory, settings, identity, administrator, get_db):
                 raise HTTPException(422, "Choose a valid answer option")
         return answers
 
+    def module_quiz_questions(db, vid, module_id, user):
+        v = version(db, vid, user)
+        module = next((m for m in content_of(v)["modules"] if m["id"] == module_id), None)
+        if not module or not module.get("quiz"):
+            raise HTTPException(404, "Module quiz not found")
+        return module["quiz"]
+
+    @app.post("/api/course-versions/{vid}/modules/{module_id}/quiz-attempts")
+    def begin_module_quiz(vid: str, module_id: str, auth=Depends(identity), db=Depends(get_db)):
+        allocation_lock(db)
+        if not progress(db, vid, auth[0]):
+            raise HTTPException(409, "Open the class before starting a module quiz")
+        questions = module_quiz_questions(db, vid, module_id, auth[0])
+        existing = list(db.scalars(select(ModuleQuizAttempt).where(
+            ModuleQuizAttempt.version_id == vid, ModuleQuizAttempt.module_id == module_id,
+            ModuleQuizAttempt.user_id == auth[0].id).order_by(ModuleQuizAttempt.created.desc())))
+        current = next((item for item in existing if item.status == "in_progress"), None)
+        if current:
+            return module_quiz_view(db, current, auth[0])
+        order = [q["id"] for q in questions]
+        previous_order = json.loads(existing[0].question_order_json) if existing else None
+        random.SystemRandom().shuffle(order)
+        if len(order) > 1 and order == previous_order:
+            order = order[1:] + order[:1]
+        attempt = ModuleQuizAttempt(version_id=vid, module_id=module_id, user_id=auth[0].id,
+                                    question_order_json=json.dumps(order))
+        db.add(attempt); db.flush(); audit(db, auth[0], "start_module_quiz", attempt.id); db.commit()
+        return module_quiz_view(db, attempt, auth[0])
+
+    @app.get("/api/module-quiz-attempts/{aid}")
+    def read_module_quiz(aid: str, auth=Depends(identity), db=Depends(get_db)):
+        return module_quiz_view(db, module_quiz_attempt(db, aid, auth[0]), auth[0])
+
+    def write_module_quiz(aid, body, auth, db, submit=False):
+        allocation_lock(db)
+        attempt = module_quiz_attempt(db, aid, auth[0])
+        if attempt.status != "in_progress":
+            raise HTTPException(409, "This module quiz attempt is already submitted")
+        questions = module_quiz_questions(db, attempt.version_id, attempt.module_id, auth[0])
+        answers = validated_answers(questions, body.answers, submit)
+        attempt.answers_json = json.dumps(answers)
+        if submit:
+            marks = {q["id"]: q["points"] if answers[q["id"]] == q["correct"] else 0
+                     for q in questions}
+            attempt.marks_json = json.dumps(marks)
+            attempt.score = round(sum(marks.values()) * 100 / sum(q["points"] for q in questions), 2)
+            attempt.passed = attempt.score >= 80
+            attempt.status, attempt.submitted = "graded", time.time()
+            audit(db, auth[0], "submit_module_quiz", attempt.id)
+        db.commit()
+        return module_quiz_view(db, attempt, auth[0])
+
+    @app.put("/api/module-quiz-attempts/{aid}")
+    def save_module_quiz(aid: str, body: AnswerWrite, auth=Depends(identity), db=Depends(get_db)):
+        return write_module_quiz(aid, body, auth, db)
+
+    @app.post("/api/module-quiz-attempts/{aid}/submit")
+    def submit_module_quiz(aid: str, body: AnswerWrite, auth=Depends(identity), db=Depends(get_db)):
+        return write_module_quiz(aid, body, auth, db, True)
+
+    @app.post("/api/course-versions/{vid}/progress-test-attempts")
+    def begin_progress_test(vid: str, auth=Depends(identity), db=Depends(get_db)):
+        allocation_lock(db)
+        v = version(db, vid, auth[0]); p = progress(db, vid, auth[0]); content = content_of(v)
+        if not p:
+            raise HTTPException(409, "Open the class before starting its pretest")
+        if not content.get("progress_test_enabled"):
+            raise HTTPException(404, "This class has no pretest")
+        pairs = progress_questions(content)
+        if not pairs or any(len(module.get("quiz", [])) < 8 for module in content["modules"]):
+            raise HTTPException(409, "The class pretest is not configured for every module")
+        attempts = list(db.scalars(select(ProgressTestAttempt).where(
+            ProgressTestAttempt.version_id == vid, ProgressTestAttempt.user_id == auth[0].id)
+            .order_by(ProgressTestAttempt.created.desc())))
+        current = next((item for item in attempts if item.status == "in_progress"), None)
+        if current:
+            db.commit()
+            return progress_test_view(db, current)
+        if p.current_module:
+            raise HTTPException(409, "The class pretest is only available when the class first opens")
+        p.current_module = content["modules"][0]["id"]
+        order = [q["id"] for _, q in pairs]
+        previous_order = json.loads(attempts[0].question_order_json) if attempts else None
+        random.SystemRandom().shuffle(order)
+        if len(order) > 1 and order == previous_order:
+            order = order[1:] + order[:1]
+        attempt = ProgressTestAttempt(version_id=vid, user_id=auth[0].id,
+                                      question_order_json=json.dumps(order))
+        db.add(attempt); db.flush(); audit(db, auth[0], "start_progress_test", attempt.id); db.commit()
+        return progress_test_view(db, attempt)
+
+    @app.post("/api/progress-test-attempts/{aid}/submit")
+    def submit_progress_test(aid: str, body: AnswerWrite, auth=Depends(identity), db=Depends(get_db)):
+        allocation_lock(db)
+        attempt = progress_test_attempt(db, aid, auth[0])
+        if attempt.status != "in_progress":
+            raise HTTPException(409, "This pretest attempt is already submitted")
+        version_row = db.get(CourseVersion, attempt.version_id); content = content_of(version_row)
+        pairs = progress_questions(content)
+        questions = [question for _, question in pairs]
+        answers = validated_answers(questions, body.answers, True)
+        marks = {q["id"]: q["points"] if answers[q["id"]] == q["correct"] else 0 for q in questions}
+        module_results = {}
+        completed = set(json.loads(progress(db, attempt.version_id, auth[0]).completed_json))
+        for module in content["modules"]:
+            module_questions = module["quiz"]
+            earned = sum(marks[q["id"]] for q in module_questions)
+            possible = sum(q["points"] for q in module_questions)
+            perfect = earned == possible
+            module_results[module["id"]] = {"score": round(earned * 100 / possible, 2),
+                                             "question_count": len(module_questions), "perfect": perfect}
+            if perfect:
+                completed.add(module["id"])
+        p = progress(db, attempt.version_id, auth[0])
+        p.completed_json = json.dumps(sorted(completed))
+        attempt.answers_json = json.dumps(answers); attempt.marks_json = json.dumps(marks)
+        attempt.module_results_json = json.dumps(module_results)
+        attempt.score = round(sum(marks.values()) * 100 / sum(q["points"] for q in questions), 2)
+        attempt.status = "graded"; attempt.submitted = time.time()
+        audit(db, auth[0], "submit_progress_test", attempt.id)
+        db.commit()
+        return progress_test_view(db, attempt)
+
     def score_attempt(a, questions, marks, exam):
         a.marks_json = json.dumps(marks)
         if any(q["id"] not in marks for q in questions):
@@ -446,11 +736,22 @@ def mount_learning(app, factory, settings, identity, administrator, get_db):
 
     @app.get("/api/class-results")
     def my_class_results(auth=Depends(identity), db=Depends(get_db)):
+        quiz_attempts = []
+        for item in db.scalars(select(ModuleQuizAttempt).where(
+                ModuleQuizAttempt.user_id == auth[0].id).order_by(ModuleQuizAttempt.created.desc())):
+            content = content_of(db.get(CourseVersion, item.version_id))
+            module = next((m for m in content["modules"] if m["id"] == item.module_id), None)
+            if module:
+                quiz_attempts.append({"id": item.id, "version_id": item.version_id,
+                    "class_title": content["title"], "module_id": item.module_id,
+                    "module_title": module["title"], "status": item.status,
+                    "score": item.score, "passed": item.passed, "created": item.created})
         return {"enrollments": [{"version_id": p.version_id,
                  "title": content_of(db.get(CourseVersion, p.version_id))["title"],
                  "completed": len(json.loads(p.completed_json)),
                  "module_count": len(content_of(db.get(CourseVersion, p.version_id))["modules"])}
                  for p in db.scalars(select(CourseProgress).where(CourseProgress.user_id == auth[0].id))],
+                "module_quiz_attempts": quiz_attempts,
                 "attempts": [attempt_view(db, a, auth[0]) for a in db.scalars(select(ExamAttempt).where(
                     ExamAttempt.user_id == auth[0].id).order_by(ExamAttempt.created.desc()))]}
 
@@ -574,13 +875,16 @@ def mount_learning(app, factory, settings, identity, administrator, get_db):
         candidate = Lab(template_id=body.template_id)
         try:
             adapter.template_ready(candidate)
+            if body.secondary_template_id is not None:
+                adapter.template_ready(Lab(template_id=body.secondary_template_id))
         except Exception:
             raise HTTPException(409, "The package template is not available to the Academy on Proxmox")
         allocation_lock(db)
         lab = db.get(Lab, body.id)
         if lab and lab.enabled:
             raise HTTPException(409, "Deactivate the existing lab before replacing it from a package")
-        values = body.model_dump(exclude={"schema_version", "package_format", "disk_sha256", "activate", "drills"})
+        values = body.model_dump(exclude={"schema_version", "package_format", "disk_sha256",
+                                         "secondary_disk_sha256", "activate", "drills"})
         if not lab:
             lab = Lab(id=body.id, enabled=body.activate)
             db.add(lab)
