@@ -114,7 +114,7 @@ def test_bug_reports_are_bound_to_signed_in_user_and_admin_only(system):
     learner = user_client(system, "reporting-learner")
     page = learner.get("/labs")
     assert page.status_code == 200
-    assert '/static/academy.js?v=20261022-game-player-1' in page.text
+    assert '/static/academy.js?v=20261022-video-order-1' in page.text
     assert 'href="/bug-report"' in page.text
     assert 'href="/admin/bug-reports"' in page.text
     assert learner.get("/bug-report").status_code == 200
@@ -183,7 +183,7 @@ def test_learning_games_are_admin_uploaded_authenticated_and_sandboxed(system):
     workspace = learner.get("/games")
     assert workspace.status_code == 200
     assert 'href="/games" data-page="games"' in workspace.text
-    assert 'academy.js?v=20261022-game-player-1' in workspace.text
+    assert 'academy.js?v=20261022-video-order-1' in workspace.text
     assert 'learning.js?v=20261022-learning-games-1' in workspace.text
     assert admin.get("/content").status_code == 200
     html = b"<!doctype html><html><head><meta charset='utf-8'><title>Quiz</title></head><body><script>document.body.textContent='Ready';</script></body></html>"
@@ -294,6 +294,43 @@ def test_video_library_is_private_and_streams_byte_ranges(system, tmp_path):
     settings.video_root = str(tmp_path / "offline")
     assert admin.get("/api/videos").json() == {"available": False, "videos": []}
     assert admin.get(stream).status_code == 503
+
+
+def test_video_order_is_admin_only_complete_and_persistent(system, tmp_path):
+    _, admin, _, settings = system
+    settings.video_root = str(tmp_path / "videos")
+    topic = Path(settings.video_root) / "Creator" / "Topic"
+    topic.mkdir(parents=True)
+    for title in ("Alpha", "Bravo", "Charlie"):
+        (topic / f"{title}.mp4").write_bytes(title.encode())
+
+    videos = admin.get("/api/videos").json()["videos"]
+    assert [video["title"] for video in videos] == ["Alpha", "Bravo", "Charlie"]
+    body = {"author": "Creator", "topic": "Topic",
+            "video_ids": [videos[2]["id"], videos[0]["id"], videos[1]["id"]]}
+    learner = user_client(system, "video-order-learner")
+    assert learner.put("/api/admin/videos/order", json=body).status_code == 403
+    assert admin.put("/api/admin/videos/order", json={**body, "video_ids": body["video_ids"][:2]}).status_code == 422
+    saved = admin.put("/api/admin/videos/order", json=body)
+    assert saved.status_code == 200, saved.text
+    assert saved.json() == {"saved": True, "count": 3}
+    assert [video["title"] for video in admin.get("/api/videos").json()["videos"]] == [
+        "Charlie", "Alpha", "Bravo"]
+
+    # IDs change if a media file is replaced, but the saved order follows its path.
+    (topic / "Charlie.mp4").write_bytes(b"Charlie replaced")
+    reordered = admin.get("/api/videos").json()["videos"]
+    assert [video["title"] for video in reordered] == ["Charlie", "Alpha", "Bravo"]
+
+
+def test_cloud_computing_is_classified_as_topic_and_creator(system, tmp_path):
+    _, admin, _, settings = system
+    settings.video_root = str(tmp_path / "videos")
+    topic = Path(settings.video_root) / "Cloud Computing" / "Cloud Computing - Introduction (2019)"
+    topic.mkdir(parents=True)
+    (topic / "Part 1.mp4").write_bytes(b"video")
+    video = admin.get("/api/videos").json()["videos"][0]
+    assert (video["author"], video["topic"]) == ("Eli the Computer Guy", "Cloud Computing")
 
 
 def test_video_credit_requires_watched_playback_and_is_per_user(system, tmp_path, monkeypatch):

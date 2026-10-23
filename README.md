@@ -8,6 +8,8 @@ The public pages, sign-in screen, and Academy workspace support light and dark a
 
 Signed-in learners can browse a Video Library by creator and topic and play MP4 files inside the Academy. A read-only SMB mount can supply files from a Windows `Creator/Topic/Video.mp4` folder. The API checks the learner session before listing or streaming videos, supports byte-range playback, and returns an unavailable message if storage is disconnected. Watching at least 90% and reaching the end records standalone credit for that account in My Results; seeking ahead does not add watched time. This is playback tracking, not proof of human attention. This repository includes the application code and setup scripts, but no video media, SMB credentials, or site-specific mount configuration. Use only media you have permission to serve to your Academy audience.
 
+Administrators can change video order within each creator/topic from the Video Library. The saved order applies to all viewers and follows media file paths. The Cloud Computing series is listed under **Eli the Computer Guy → Cloud Computing**.
+
 Use a separate Python 3.12 virtual environment. Install `backend/requirements.txt`, pytest 8.3.5 and PyYAML 6.0.2. Set `PYTHONPATH` to `backend` and `tests`, then run:
 
     python -m pytest tests/test_academy.py tests/test_proxmox.py tests/test_packaging.py tests/test_learning.py -q

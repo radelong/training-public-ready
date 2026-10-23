@@ -16,6 +16,12 @@
 .video-item .video-credit { font-weight: 700; color: var(--cyan); }
 .video-item .video-credit.complete { color: var(--green); }
 .video-credit-status { font-size: 14px; font-weight: 700; color: var(--cyan); margin: 0 0 8px; }
+.video-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; align-items: stretch; }
+.video-order-actions { display: flex; flex-direction: column; gap: 4px; }
+.video-order-actions button { min-width: 38px; color: var(--ink); background: var(--surface-soft); border: 1px solid var(--line); border-radius: 8px; cursor: pointer; }
+.video-order-actions button:hover:not(:disabled) { border-color: var(--cyan); background: var(--cyanlight); }
+.video-order-actions button:disabled { opacity: .45; cursor: not-allowed; }
+.video-order-help { margin: 4px 0 0; }
 .video-empty { padding: 35px; text-align: center; background: var(--surface-soft); border: 1px dashed var(--line); border-radius: 10px; }
 @media (max-width: 850px) { .video-browser { grid-template-columns: 1fr; } .video-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 540px) { .video-filters, .video-items { grid-template-columns: 1fr; } .video-filter, .video-main { padding: 16px; } }

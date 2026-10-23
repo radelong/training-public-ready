@@ -21,7 +21,7 @@ from sqlalchemy import select, func
 from sqlalchemy.exc import IntegrityError
 from .config import Settings
 from .db import (database, allocation_lock, User, Login, LoginFailure, Lab, LabSession,
-                 Job, Result, VideoProgress, Audit, Heartbeat, ConsoleGrant)
+                 Job, Result, VideoProgress, VideoCatalogOrder, Audit, Heartbeat, ConsoleGrant)
 from .db import BugReport, LearningGame, LearningGameProgress
 from .security import password_hash, password_ok, digest, decrypt_key, guac_data
 from . import agreement
@@ -85,6 +85,28 @@ class VideoPosition(BaseModel):
     position: float = Field(ge=0, le=43202, allow_inf_nan=False)
     playing: bool
     ended: bool = False
+
+
+class VideoOrderUpdate(BaseModel):
+    author: str = Field(min_length=1, max_length=180)
+    topic: str = Field(min_length=1, max_length=180)
+    video_ids: list[str] = Field(min_length=1, max_length=500)
+
+    @field_validator("author", "topic")
+    @classmethod
+    def trim_label(cls, value):
+        value = value.strip()
+        if not value:
+            raise ValueError("Creator and topic are required")
+        return value
+
+    @field_validator("video_ids")
+    @classmethod
+    def unique_video_ids(cls, values):
+        if len(set(values)) != len(values) or any(
+                not re.fullmatch(r"[0-9a-f]{64}", value) for value in values):
+            raise ValueError("Video order must contain unique valid video IDs")
+        return values
 
 
 class GameProgressState(BaseModel):
@@ -173,6 +195,11 @@ def create_app(settings=None, provider=None):
         if auth[0].role != "admin":
             raise HTTPException(403, "Administrator access required")
         return auth
+
+    def ordered_video_catalogue(db):
+        orders = {row.relative_path: row.position
+                  for row in db.scalars(select(VideoCatalogOrder))}
+        return video_catalogue(s.video_root, orders)
 
     def revoke_user_logins(db, user_id, except_token=None):
         query = select(Login).where(Login.user_id == user_id)
@@ -339,7 +366,7 @@ def create_app(settings=None, provider=None):
 
     @app.get("/api/videos")
     def videos(auth=Depends(identity), db=Depends(get_db)):
-        items = video_catalogue(s.video_root)
+        items = ordered_video_catalogue(db)
         progress = {row.video_id: row for row in db.scalars(select(VideoProgress).where(
             VideoProgress.user_id == auth[0].id))}
         return {"available": items is not None,
@@ -349,9 +376,37 @@ def create_app(settings=None, provider=None):
                                 json.loads(progress[item.id].watched_json)) / progress[item.id].duration))
                             if item.id in progress else 0} for item in (items or [])]}
 
+    @app.put("/api/admin/videos/order")
+    def reorder_videos(body: VideoOrderUpdate, auth=Depends(administrator), db=Depends(get_db)):
+        items = ordered_video_catalogue(db)
+        if items is None:
+            raise HTTPException(503, "Video storage is unavailable")
+        group = [item for item in items
+                 if item.author == body.author and item.topic == body.topic]
+        if not group or {item.id for item in group} != set(body.video_ids):
+            raise HTTPException(422, "Include every video in this creator and topic exactly once")
+        position_by_id = {video_id: position for position, video_id in enumerate(body.video_ids)}
+        stored = {row.relative_path: row for row in db.scalars(
+            select(VideoCatalogOrder).where(
+                VideoCatalogOrder.relative_path.in_([item.relative_path for item in group])))}
+        for item in sorted(group, key=lambda value: value.relative_path):
+            row = stored.get(item.relative_path)
+            if row is None:
+                row = VideoCatalogOrder(relative_path=item.relative_path,
+                                        position=position_by_id[item.id])
+                db.add(row)
+            else:
+                row.position = position_by_id[item.id]
+        db.add(Audit(user_id=auth[0].id, action="reorder_videos",
+                     target=f"{body.author}/{body.topic}"[:128]))
+        db.commit()
+        return {"saved": True, "count": len(group)}
+
     @app.get("/api/videos/credits")
     def video_credits(auth=Depends(identity), db=Depends(get_db)):
-        return [{"video_id": row.video_id, "author": row.author, "topic": row.topic,
+        return [{"video_id": row.video_id,
+                 "author": "Eli the Computer Guy" if row.author.casefold() == "cloud computing" else row.author,
+                 "topic": "Cloud Computing" if row.author.casefold() == "cloud computing" else row.topic,
                  "title": row.title, "completed_at": row.completed} for row in db.scalars(
                      select(VideoProgress).where(VideoProgress.user_id == auth[0].id,
                                                  VideoProgress.completed.is_not(None)).order_by(

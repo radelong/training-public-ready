@@ -130,6 +130,12 @@ class VideoProgress(Base):
     completed: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
+class VideoCatalogOrder(Base):
+    __tablename__ = "video_catalog_order"
+    relative_path: Mapped[str] = mapped_column(String(1024), primary_key=True)
+    position: Mapped[int] = mapped_column(Integer)
+
+
 class Audit(Base):
     __tablename__ = "audit"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)

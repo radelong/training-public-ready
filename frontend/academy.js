@@ -66,8 +66,10 @@ function renderVideoLibrary(){
   const authorButtons=authors.map(author=>{const count=items.filter(video=>video.author===author).length;const active=author===state.videoAuthor;return `<button type="button" data-video-author="${esc(author)}" aria-pressed="${active}" class="${active?"selected":""}">${esc(author)}<small>${count} ${count===1?"video":"videos"}</small></button>`;}).join("");
   const topicButtons=topics.map(topic=>{const count=byAuthor.filter(video=>video.topic===topic).length;const active=topic===state.videoTopic;return `<button type="button" data-video-topic="${esc(topic)}" aria-pressed="${active}" class="${active?"selected":""}">${esc(topic)}<small>${count} ${count===1?"video":"videos"}</small></button>`;}).join("");
   const creditText=video=>video.completed_at?"Completed · credit recorded":video.watched_percent?`${video.watched_percent}% watched · no credit yet`:"Not completed";
-  const videoButtons=byTopic.map(video=>`<button type="button" class="video-item ${video.id===state.videoId?"selected":""}" data-video-id="${esc(video.id)}" aria-pressed="${video.id===state.videoId}"><strong>${esc(video.title)}</strong><span>${Math.max(1,Math.round(video.size_bytes/1048576))} MB · ${esc(video.topic)}</span><span class="video-credit ${video.completed_at?"complete":""}">${esc(creditText(video))}</span></button>`).join("");
-  $("content").innerHTML=title+`<div class="video-browser"><aside class="video-filters" aria-label="Video filters"><section class="video-filter"><h2>Creators</h2><div class="video-filter-list">${authorButtons}</div></section><section class="video-filter"><h2>Topics</h2><div class="video-filter-list">${topicButtons}</div></section></aside><section class="video-main" aria-label="Video player"><p class="eyebrow">${esc(state.videoAuthor)} / ${esc(state.videoTopic)}</p><h2>${esc(selected.title)}</h2><p class="video-meta">Select Play to stream this video in the Academy.</p><video class="video-player" controls playsinline preload="metadata" controlslist="nodownload" aria-label="${esc(selected.title)}" src="/api/videos/${esc(selected.id)}/stream">Your browser cannot play this video.</video><p class="video-credit-status" data-video-credit role="status">${esc(creditText(selected))}</p><p class="video-meta">Credit is recorded when you reach the end after watching at least 90% of the video. Seeking past sections does not count.</p><h2>Videos in this topic</h2><div class="video-items">${videoButtons}</div></section></div>`;
+  const canReorderVideos=state.user?.role==="admin";
+  const videoButtons=byTopic.map((video,index)=>`<div class="video-row"><button type="button" class="video-item ${video.id===state.videoId?"selected":""}" data-video-id="${esc(video.id)}" aria-pressed="${video.id===state.videoId}"><strong>${esc(video.title)}</strong><span>${Math.max(1,Math.round(video.size_bytes/1048576))} MB · ${esc(video.topic)}</span><span class="video-credit ${video.completed_at?"complete":""}">${esc(creditText(video))}</span></button>${canReorderVideos?`<div class="video-order-actions" aria-label="Order ${esc(video.title)}"><button type="button" data-video-move="${index}" data-direction="-1" aria-label="Move ${esc(video.title)} up" ${index===0?"disabled":""}>↑</button><button type="button" data-video-move="${index}" data-direction="1" aria-label="Move ${esc(video.title)} down" ${index===byTopic.length-1?"disabled":""}>↓</button></div>`:""}</div>`).join("");
+  const orderHelp=canReorderVideos?'<p class="video-meta video-order-help">Use the up/down controls to set the order for this creator and topic. Changes save for everyone.</p>':'';
+  $("content").innerHTML=title+`<div class="video-browser"><aside class="video-filters" aria-label="Video filters"><section class="video-filter"><h2>Creators</h2><div class="video-filter-list">${authorButtons}</div></section><section class="video-filter"><h2>Topics</h2><div class="video-filter-list">${topicButtons}</div></section></aside><section class="video-main" aria-label="Video player"><p class="eyebrow">${esc(state.videoAuthor)} / ${esc(state.videoTopic)}</p><h2>${esc(selected.title)}</h2><p class="video-meta">Select Play to stream this video in the Academy.</p><video class="video-player" controls playsinline preload="metadata" controlslist="nodownload" aria-label="${esc(selected.title)}" src="/api/videos/${esc(selected.id)}/stream">Your browser cannot play this video.</video><p class="video-credit-status" data-video-credit role="status">${esc(creditText(selected))}</p><p class="video-meta">Credit is recorded when you reach the end after watching at least 90% of the video. Seeking past sections does not count.</p><h2>Videos in this topic</h2>${orderHelp}<div class="video-items">${videoButtons}</div></section></div>`;
   const player=$("content").querySelector("video");
   player.addEventListener("error",()=>notify("The video could not play. Refresh the library or contact your training administrator."));
   let lastSent=0,creditUnavailable=false,queue=Promise.resolve();
@@ -86,10 +88,19 @@ function renderVideoLibrary(){
   player.addEventListener("ended",()=>report(true));
 }
 document.addEventListener("click",async event=>{
-  const target=event.target.closest("button[data-video-author],button[data-video-topic],button[data-video-id],button[data-video-refresh]");
+  const target=event.target.closest("button[data-video-author],button[data-video-topic],button[data-video-id],button[data-video-refresh],button[data-video-move]");
   if(!target||!state.user)return;
   try{
     if(target.hasAttribute("data-video-refresh"))await renderVideos();
+    else if(target.hasAttribute("data-video-move")){
+      if(state.user.role!=="admin")return;
+      const ordered=state.videoItems.filter(video=>video.author===state.videoAuthor&&video.topic===state.videoTopic);
+      const from=Number(target.dataset.videoMove),to=from+Number(target.dataset.direction);
+      if(!Number.isInteger(from)||to<0||to>=ordered.length)return;
+      [ordered[from],ordered[to]]=[ordered[to],ordered[from]];
+      await api("/admin/videos/order","PUT",{author:state.videoAuthor,topic:state.videoTopic,video_ids:ordered.map(video=>video.id)});
+      await renderVideos();notify("Video order saved for this topic");
+    }
     else if(target.hasAttribute("data-video-author")){state.videoAuthor=target.dataset.videoAuthor;state.videoTopic=null;state.videoId=null;renderVideoLibrary();}
     else if(target.hasAttribute("data-video-topic")){state.videoTopic=target.dataset.videoTopic;state.videoId=null;renderVideoLibrary();}
     else if(target.hasAttribute("data-video-id")){state.videoId=target.dataset.videoId;renderVideoLibrary();}
