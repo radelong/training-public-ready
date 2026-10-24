@@ -1,7 +1,10 @@
 import copy
 import json
 from pathlib import Path
+import pytest
 from test_academy import system, user_client
+from sqlalchemy import select
+from academy.db import Audit, ExamReset, ProgressTestAttempt
 
 
 def definition(pdf=None, written=False, require=True, attempts=2):
@@ -26,6 +29,125 @@ def publish(admin, data):
     response = admin.post('/api/admin/courses/' + c['id'] + '/publish', json={"revision": c['revision']})
     assert response.status_code == 200, response.text
     return c, response.json()['id']
+
+
+def reset_account_id(admin, username):
+    return next(item['id'] for item in admin.get('/api/admin/overview').json()['users']
+                if item['username'] == username)
+
+
+def test_admin_exam_resets_preserve_history_and_isolate_learners(system):
+    admin = system[1]
+    learner = user_client(system, 'reset-learner')
+    other = user_client(system, 'reset-other')
+    user_id = reset_account_id(admin, 'reset-learner')
+    data = definition(require=False, attempts=1)
+    data['modules'][0]['quiz'] = [
+        {"id": "quiz-1", "type": "multiple_choice", "prompt": "Which tool lists sockets?",
+         "choices": ["ss", "pwd"], "correct": 0, "points": 1, "explanation": "ss lists sockets."},
+        {"id": "quiz-2", "type": "multiple_choice", "prompt": "Which tool shows a route?",
+         "choices": ["ip route", "date"], "correct": 0, "points": 1, "explanation": "ip route shows routes."}]
+    _, vid = publish(admin, data)
+    for client in (learner, other):
+        assert client.post(f'/api/course-versions/{vid}/enroll').status_code == 200
+    quiz = learner.post(f'/api/course-versions/{vid}/modules/module1/quiz-attempts').json()
+    final = learner.post(f'/api/course-versions/{vid}/attempts').json()
+    other_final = other.post(f'/api/course-versions/{vid}/attempts').json()
+    assert learner.get(f'/api/admin/users/{user_id}/exam-resets').status_code == 403
+    assert learner.post(f'/api/admin/users/{user_id}/exam-resets', json={'scope': 'all'}).status_code == 403
+    assert admin.post(f'/api/admin/users/{user_id}/exam-resets', json={'scope': 'quiz:bad:module1'}).status_code == 422
+    options = admin.get(f'/api/admin/users/{user_id}/exam-resets').json()['options']
+    assert {f'quiz:{vid}:module1', f'final:{vid}', 'assessment:overall',
+            'assessment:graduation'} <= {item['scope'] for item in options}
+
+    reset = admin.post(f'/api/admin/users/{user_id}/exam-resets',
+                       json={'scope': f'quiz:{vid}:module1'})
+    assert reset.status_code == 200
+    assert learner.post(f"/api/module-quiz-attempts/{quiz['id']}/submit",
+                        json={'answers': {'quiz-1': 0, 'quiz-2': 0}}).status_code == 409
+    assert learner.post(f'/api/course-versions/{vid}/modules/module1/quiz-attempts').json()['id'] != quiz['id']
+    assert learner.post(f'/api/course-versions/{vid}/attempts').json()['id'] == final['id']
+    assert other.post(f'/api/course-versions/{vid}/attempts').json()['id'] == other_final['id']
+
+    response = learner.post(f"/api/exam-attempts/{final['id']}/submit", json={'answers': {'q1': 1}})
+    assert response.status_code == 200 and response.json()['score'] == 100
+    assert learner.post(f'/api/course-versions/{vid}/attempts').status_code == 409
+    assert admin.post(f'/api/admin/users/{user_id}/exam-resets',
+                      json={'scope': f'final:{vid}'}).status_code == 200
+    replacement = learner.post(f'/api/course-versions/{vid}/attempts').json()
+    assert replacement['id'] != final['id']
+    assert learner.get('/api/class-results').json()['attempts'][-1]['id'] == final['id']
+    assert learner.get(f"/api/exam-attempts/{final['id']}").json()['score'] == 100
+    assert learner.get(f'/api/course-versions/{vid}').json()['completed'] == []
+
+    bank = [assessment_question('reset-overall', 'overall', 'Networking',
+                                'Which observation isolates a local route failure?'),
+            assessment_question('reset-graduation', 'graduation', 'Networking',
+                                'Which command verifies the default route?')]
+    assert admin.put('/api/admin/academy-assessments/bank', json={'questions': bank}).status_code == 200
+    first = learner.post('/api/academy-assessments/overall/attempts').json()
+    assert admin.post(f'/api/admin/users/{user_id}/exam-resets',
+                      json={'scope': 'assessment:overall'}).status_code == 200
+    assert learner.put(f"/api/academy-assessments/attempts/{first['id']}",
+                       json={'answers': {}}).status_code == 409
+    second = learner.post('/api/academy-assessments/overall/attempts').json()
+    assert second['id'] != first['id']
+    assert admin.post(f'/api/admin/users/{user_id}/exam-resets',
+                      json={'scope': 'all'}).status_code == 200
+    assert learner.post(f'/api/course-versions/{vid}/attempts').json()['id'] != replacement['id']
+    assert learner.post('/api/academy-assessments/overall/attempts').json()['id'] != second['id']
+    assert other.post(f'/api/course-versions/{vid}/attempts').json()['id'] == other_final['id']
+    assert len(learner.get('/api/class-results').json()['attempts']) == 3
+    assert len(learner.get('/api/academy-assessments').json()['attempts']) == 3
+    with system[0].state.factory() as db:
+        assert len(list(db.scalars(select(ExamReset).where(ExamReset.user_id == user_id)))) == 4
+        assert len(list(db.scalars(select(Audit).where(Audit.action == 'reset_exam_attempts')))) == 4
+
+
+def test_admin_pretest_reset_reopens_only_selected_class_and_can_be_skipped(system):
+    admin = system[1]
+    learner = user_client(system, 'pretest-reset-learner')
+    other = user_client(system, 'pretest-reset-other')
+    user_id = reset_account_id(admin, 'pretest-reset-learner')
+    data = definition()
+    data['progress_test_enabled'] = True
+    data['modules'][0]['quiz'] = [
+        {"id": f"pretest-{index}", "type": "multiple_choice",
+         "prompt": f"Which route evidence is numbered {index}?",
+         "choices": ["Route table", "Clock"], "correct": 0, "points": 1,
+         "explanation": "The route table provides route evidence."} for index in range(8)]
+    _, vid = publish(admin, data)
+    for client in (learner, other):
+        client.post(f'/api/course-versions/{vid}/enroll')
+    first = learner.post(f'/api/course-versions/{vid}/progress-test-attempts').json()
+    assert learner.put(f'/api/course-versions/{vid}/progress',
+                       json={'module_id': 'module1', 'complete': False}).status_code == 200
+    assert learner.get(f'/api/course-versions/{vid}').json()['pretest_available'] is False
+    assert admin.post(f'/api/admin/users/{user_id}/exam-resets',
+                      json={'scope': f'pretest:{vid}'}).status_code == 200
+    lesson = learner.get(f'/api/course-versions/{vid}').json()
+    assert lesson['pretest_available'] is True and lesson['progress_test_attempt'] is None
+    assert learner.post(f"/api/progress-test-attempts/{first['id']}/submit",
+                        json={'answers': {}}).status_code == 409
+    second = learner.post(f'/api/course-versions/{vid}/progress-test-attempts').json()
+    assert second['id'] != first['id']
+    assert learner.get(f'/api/course-versions/{vid}').json()['progress_test_attempt']['id'] == second['id']
+    assert admin.post(f'/api/admin/users/{user_id}/exam-resets',
+                      json={'scope': f'pretest:{vid}'}).status_code == 200
+    assert learner.get(f'/api/course-versions/{vid}').json()['pretest_available'] is True
+    assert learner.put(f'/api/course-versions/{vid}/progress',
+                       json={'module_id': 'module1', 'complete': False}).status_code == 200
+    assert learner.get(f'/api/course-versions/{vid}').json()['pretest_available'] is False
+    assert learner.post(f'/api/course-versions/{vid}/progress-test-attempts').status_code == 409
+    assert admin.post(f'/api/admin/users/{user_id}/exam-resets',
+                      json={'scope': 'all'}).status_code == 200
+    assert learner.get(f'/api/course-versions/{vid}').json()['pretest_available'] is True
+    third = learner.post(f'/api/course-versions/{vid}/progress-test-attempts').json()
+    assert third['id'] not in (first['id'], second['id'])
+    assert other.get(f'/api/course-versions/{vid}').json()['pretest_available'] is True
+    with system[0].state.factory() as db:
+        attempts = list(db.scalars(select(ProgressTestAttempt).where(ProgressTestAttempt.user_id == user_id)))
+        assert len(attempts) == 3 and all(item.status == 'in_progress' for item in attempts)
 
 
 def test_roles_keys_prerequisites_and_grading(system):
@@ -197,6 +319,123 @@ def test_published_module_quiz_requires_explanations_and_objective_questions(sys
     data=definition()
     data['modules'][0]['quiz']=[{"id":"q","type":"written","prompt":"Explain.","points":1,"rubric":"Evidence"}]
     assert admin.post('/api/admin/courses',json=data).status_code==422
+
+
+def assessment_question(qid,kind,area,prompt,correct=0):
+    return {"id":qid,"kind":kind,"area":area,"prompt":prompt,
+        "choices":["First choice","Second choice","Third choice"],"correct":correct,"points":1,
+        "explanation":"The first choice follows the evidence and the stated scope.",
+        "choice_explanations":["This option is supported by the scenario.","This option does not fit the stated evidence.","This option is outside the requested scope."],
+        "course_categories":["Networking"] if area=="Networking" else ["Linux"],
+        "lab_kinds":["netlab"] if area=="Networking" else ["linux"],
+        "topics":["Addressing and troubleshooting"] if area=="Networking" else ["Linux operations"]}
+
+
+def test_academy_assessments_are_separate_private_and_report_area_growth(system):
+    admin=system[1]; learner=user_client(system,"academy-assessment-learner"); outsider=user_client(system,"academy-assessment-outsider")
+    course=definition(); course["category"]="Networking"; course["title"]="Routing Foundations"
+    course["modules"][0]["quiz"]=[{"id":"module-route-check","type":"multiple_choice",
+        "prompt":"Which command checks the active listener?","choices":["ss","pwd"],"correct":0,"points":1,
+        "explanation":"The ss command reports listening sockets."}]
+    _,version_id=publish(admin,course)
+    assert learner.get("/api/academy-assessments").json()["assessments"]["overall"]["question_count"]==0
+    def rejected(prompt, second_prompt="A distinct routing scenario?"):
+        repeated=assessment_question("duplicate","overall","Networking",prompt)
+        response=admin.put("/api/admin/academy-assessments/bank",json={"questions":[
+            repeated,assessment_question("grad-1","graduation","Networking",second_prompt)]})
+        assert response.status_code==422
+    rejected(" Which command   displays ROUTES! ")
+    rejected("WHICH command checks the active listener?")
+    rejected("A distinct routing scenario?", " a DISTINCT routing scenario! ")
+
+    bank=[
+        assessment_question("overall-net-1","overall","Networking","A workstation can reach its subnet but not remote networks. Which evidence is most useful first?"),
+        assessment_question("overall-net-2","overall","Networking","A packet leaves the source VLAN but never reaches the next subnet. Which path should be checked next?",1),
+        assessment_question("overall-linux-1","overall","Linux","A service exits immediately after startup. Which record best identifies its startup failure?",1),
+        assessment_question("overall-linux-2","overall","Linux","A user can read a file but cannot update it. Which permission should be inspected?"),
+        assessment_question("grad-net-1","graduation","Networking","A host resolves a name but connects to the wrong address. Which record separates DNS from routing?",1),
+        assessment_question("grad-linux-1","graduation","Linux","A process binds to a port but remote clients cannot connect. What should be checked first?"),
+    ]
+    response=admin.put("/api/admin/academy-assessments/bank",json={"questions":bank})
+    assert response.status_code==200,response.text
+    assert response.json()["counts"]=={"overall":4,"graduation":2}
+    assert learner.get("/api/academy-assessments").json()["assessments"]["graduation"]["question_count"]==2
+    overall=learner.post("/api/academy-assessments/overall/attempts",json={}).json()
+    assert len(overall["questions"])==4 and "correct_answers" not in overall
+    assert all(not {"correct","explanation","area","topics","section"}.intersection(question) for question in overall["questions"])
+    assert outsider.get(f"/api/academy-assessments/attempts/{overall['id']}").status_code==404
+    assert learner.post(f"/api/academy-assessments/attempts/{overall['id']}/submit",json={"answers":{}}).status_code==422
+    correct_by_id={question["id"]:question["choices"][question["correct"]] for question in bank}
+    wrong={question["id"]:(question["choices"].index(correct_by_id[question["id"]])+1)%len(question["choices"])
+        for question in overall["questions"]}
+    failed=learner.post(f"/api/academy-assessments/attempts/{overall['id']}/submit",json={"answers":wrong}).json()
+    assert failed["score"]==0 and failed["passed"] is None
+    assert failed["area_scores"]["Networking"]["score"]==0
+    assert failed["area_scores"]["Linux"]["score"]==0
+    assert failed["correct_answers"] and failed["recommendations"]
+    assert failed["questions"][0]["explanation"]
+    assert learner.get("/api/academy-assessments").json()["attempts"][0]["area_scores"]["Linux"]["score"]==0
+    assert learner.get("/api/admin/academy-assessment-results").status_code==403
+    results=admin.get("/api/admin/academy-assessment-results").json()
+    assert results[0]["username"]=="academy-assessment-learner"
+    assert results[0]["area_scores"]["Networking"]["question_count"]==2
+
+    graduation=learner.post("/api/academy-assessments/graduation/attempts",json={}).json()
+    assert len(graduation["questions"])==2
+    passed=learner.post(f"/api/academy-assessments/attempts/{graduation['id']}/submit",json={
+        "answers":{question["id"]:question["choices"].index("First choice") for question in graduation["questions"]}}).json()
+    assert passed["score"]==50 and passed["passed"] is False
+    assert admin.get(f"/api/academy-assessments/attempts/{passed['id']}").json()["passed"] is False
+    assert learner.put("/api/admin/academy-assessments/bank",json={"questions":bank}).status_code==403
+
+
+def test_academy_assessment_retake_shuffles_and_bank_has_per_test_limit(system):
+    admin=system[1]; learner=user_client(system,"assessment-retake-learner")
+    bank=[assessment_question(f"overall-{i}","overall","Linux",f"Linux readiness scenario {i}: which evidence should be checked?") for i in range(3)]
+    bank += [assessment_question(f"grad-{i}","graduation","Linux",f"Linux graduation scenario {i}: which next action is justified?") for i in range(3)]
+    assert admin.put("/api/admin/academy-assessments/bank",json={"questions":bank}).status_code==200
+    first=learner.post("/api/academy-assessments/graduation/attempts",json={}).json()
+    first_order=[question["id"] for question in first["questions"]]
+    learner.post(f"/api/academy-assessments/attempts/{first['id']}/submit",json={"answers":{q["id"]:0 for q in first["questions"]}})
+    second=learner.post("/api/academy-assessments/graduation/attempts",json={}).json()
+    assert [question["id"] for question in second["questions"]]!=first_order
+    too_many=[assessment_question(f"overall-{i}","overall","Linux",f"Unique Linux scenario {i}: what should be examined next?") for i in range(101)]
+    too_many += [assessment_question("grad-only","graduation","Linux","What evidence should confirm the service is ready?")]
+    assert admin.put("/api/admin/academy-assessments/bank",json={"questions":too_many}).status_code==422
+
+
+def test_curated_private_assessment_bank_covers_all_areas_and_grades(system):
+    admin=system[1]; learner=user_client(system,"academy-assessment-bank-learner")
+    bank_path=Path(__file__).resolve().parents[1]/"staging/private/academy-assessments-bank.json"
+    if not bank_path.is_file():
+        pytest.skip("Protected assessment bank is not included in public source")
+    bank=json.loads(bank_path.read_text(encoding="utf-8"))
+    result=admin.put("/api/admin/academy-assessments/bank",json=bank)
+    assert result.status_code==200,result.text
+    assert result.json()["counts"]=={"overall":80,"graduation":80}
+    expected={"Networking":14,"Linux":14,"Security":13,"Active Directory":13,
+        "AI and prompt engineering":13,"Python":13}
+    assert set(result.json()["areas"])==set(expected)
+    assert learner.get("/api/academy-assessments").json()["assessments"]["overall"]=={
+        "question_count":80,"area_count":6}
+    for kind in ("overall","graduation"):
+        attempt=learner.post(f"/api/academy-assessments/{kind}/attempts",json={}).json()
+        assert len(attempt["questions"])==80 and "correct_answers" not in attempt
+        assert all(not {"correct","explanation","area","topics","section"}.intersection(question)
+            for question in attempt["questions"])
+        areas_by_id={question["id"]:question["area"] for question in bank["questions"]}
+        mixed_areas=[areas_by_id[question["id"]] for question in attempt["questions"]]
+        assert sum(left!=right for left,right in zip(mixed_areas,mixed_areas[1:]))>=20
+        key={question["id"]:question["choices"][question["correct"]]
+            for question in bank["questions"] if question["kind"]==kind}
+        graded=learner.post(f"/api/academy-assessments/attempts/{attempt['id']}/submit",json={
+            "answers":{question["id"]:question["choices"].index(key[question["id"]])
+                for question in attempt["questions"]}}).json()
+        assert graded["score"]==100
+        assert {area:value["question_count"] for area,value in graded["area_scores"].items()}==expected
+        assert all(value["score"]==100 for value in graded["area_scores"].values())
+        assert all("area" in question and "topics" in question for question in graded["questions"])
+        assert graded["passed"] is (True if kind=="graduation" else None)
 
 
 def test_failed_attempt_limits_and_score_only(system):

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
-destination="${1:?Usage: sudo /opt/training-academy/backup.sh BACKUP-DIRECTORY}"
+destination="${1:?Usage: sudo /opt/uscc-academy/backup.sh BACKUP-DIRECTORY}"
 test "$(id -u)" = 0
 umask 077
 mkdir -p "$destination"
 destination="$(realpath "$destination")"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
-cd /opt/training-academy
+cd /opt/uscc-academy
 # Stop writers so the database and uploaded PDFs represent one recovery point.
 trap 'docker compose up -d --pull never api worker >/dev/null' EXIT
 docker compose stop api worker

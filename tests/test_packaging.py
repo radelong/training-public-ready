@@ -19,7 +19,7 @@ def test_site_configuration_rejects_overlap_and_insufficient_resources():
     validator = module("validate-site")
     base = json.loads((ROOT/"deploy/site.example.json").read_text())
     validator.validate(base)
-    for change in ({"services_lab_ip":"10.77.1.10/24","lab_prefix":"10.77.1"},
+    for change in ({"services_lab_ip":"192.168.50.10/24","lab_prefix":"192.168.50"},
                    {"first_vmid":9000},{"nested_memory_mb":16384},{"capacity":101},
                    {"pve_node":"bad;command"},{"nested_disk_gb":80}):
         with pytest.raises(ValueError):
@@ -30,9 +30,9 @@ def test_private_services_network_has_distinct_subnet_and_lan_forward_address():
     validator = module("validate-site")
     base = json.loads((ROOT/"deploy/site.private.example.json").read_text())
     validator.validate(base)
-    for change in ({"management_gateway":"10.78.0.1"},
-                   {"academy_public_ip":"10.77.1.20"},
-                   {"services_management_ip":"10.77.1.20/24"},
+    for change in ({"management_gateway":"192.168.1.172"},
+                   {"academy_public_ip":"192.168.1.51"},
+                   {"services_management_ip":"192.168.1.51/24"},
                    {"pve_services_bridge":"vmbr0"},
                    {"services_network_mode":"unknown"}):
         with pytest.raises(ValueError):
@@ -83,6 +83,10 @@ def test_runtime_installers_have_no_network_fetches_and_shells_use_lf():
     bootstrap = (ROOT/"scripts/bootstrap-proxmox.sh").read_text()
     assert "qm list | wc -l" not in bootstrap
     assert "vm_listing=\"$(qm list)\"" in bootstrap
+    guest = (ROOT/"scripts/prepare-guest.sh").read_text()
+    assert "systemd-networkd-wait-online.service.d/20-academy.conf" in guest
+    assert "--interface=eth0:degraded --timeout=15" in guest
+    assert "ExecStart=" in guest
 
 
 def test_lab_package_contract_keeps_root_execution_out_of_the_package():
@@ -91,6 +95,9 @@ def test_lab_package_contract_keeps_root_execution_out_of_the_package():
     installer = (ROOT/"scripts/install-lab-package.sh").read_text()
     assert "academy-lab ready" in installer
     assert "issym()" in installer and "islnk()" in installer
+    assert "tarfile.open(archive,'r:*')" in installer
+    assert ".academy-lab.tar.gz" in installer
+    assert 'archive="${output}.academy-lab.tar.gz"' in (ROOT/"scripts/create-lab-package.sh").read_text()
     assert "source \"$package" not in installer and "bash \"$package" not in installer
     assert (ROOT/"docs/IMPORTING_LABS.md").is_file()
 
@@ -114,5 +121,7 @@ def test_catalogue_matches_teaching_order_and_real_drills():
     assert network["drills"][0]["id"]=="net-01-link-down"
     for drill in network["drills"]:
         assert (ROOT/"vendor/netlab/drills"/(drill["id"]+".sh")).is_file()
-    assert labs[1]["title"]=="Linux Lab" and labs[1]["drills"]==[]
+    assert labs[1]["title"]=="Linux Lab" and len(labs[1]["drills"])==23
+    assert sum(drill["estimated_minutes"] for drill in labs[1]["drills"])==445
+    assert all(drill["topics"] and drill["estimated_minutes"]>0 for drill in labs[1]["drills"])
     assert all(l["enabled"] is False for l in labs)

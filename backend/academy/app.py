@@ -974,7 +974,7 @@ def create_app(settings=None, provider=None):
         app.mount("/static", StaticFiles(directory=s.static_dir), name="static")
 
         public_pages = {"/": "home.html", "/about": "about.html", "/terms": "terms.html"}
-        protected_pages = {"/labs", "/lab-guide", "/classes", "/videos", "/games", "/sessions", "/results",
+        protected_pages = {"/labs", "/lab-guide", "/classes", "/assessments", "/videos", "/games", "/sessions", "/results",
                            "/account", "/content", "/admin", "/bug-report",
                            "/admin/bug-reports"}
 

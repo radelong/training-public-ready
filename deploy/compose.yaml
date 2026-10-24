@@ -1,6 +1,6 @@
-name: training-academy
+name: uscc-academy
 x-academy: &academy
-  image: training-academy:1.0.0
+  image: uscc-academy:1.0.0
   restart: unless-stopped
   env_file: .env
   user: "10001:10001"

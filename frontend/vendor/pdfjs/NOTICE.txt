@@ -1,0 +1,5 @@
+Training Academy bundles PDF.js 5.6.205 from Mozilla's pdfjs-dist package.
+PDF.js is distributed under the Apache License, Version 2.0. See LICENSE.
+The cmaps and standard_fonts directories retain their upstream notices.
+The class slide reader loads these local assets and the Academy's authenticated
+PDF endpoint. It makes no external requests.

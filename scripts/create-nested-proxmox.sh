@@ -33,7 +33,7 @@ qemu-img create -f qcow2 "$disk" "${SITE_NESTED_DISK_GB}G"
 # Copy the installer into libvirt-readable storage; removable mount permissions vary.
 install -m 644 "$root/assets/proxmox/proxmox.iso" /var/lib/libvirt/images/academy/proxmox.iso
 virt-install --connect qemu:///system --name "$SITE_NESTED_VM_NAME" \
-  --metadata description=TrainingAcademyNestedHypervisor \
+  --metadata description=USCCAcademyNestedHypervisor \
   --memory "$SITE_NESTED_MEMORY_MB" --vcpus "$SITE_NESTED_CORES" --cpu host-passthrough \
   --osinfo detect=on,require=off --virt-type kvm \
   --disk "path=$disk,format=qcow2,bus=virtio" \

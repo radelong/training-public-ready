@@ -6,6 +6,7 @@ import json
 import re
 import random
 import time
+import unicodedata
 from pathlib import Path
 from typing import Literal
 from urllib.parse import unquote
@@ -14,10 +15,15 @@ from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field, model_validator, ValidationError
 from sqlalchemy import select, func
 from .db import (Course, CourseVersion, ContentAsset, CourseProgress, ModuleQuizAttempt, ProgressTestAttempt, ExamAttempt,
-                 Lab, User, Audit, allocation_lock, uid)
+                 AcademyAssessmentAttempt, AcademyAssessmentQuestion, ExamReset, Lab, User, Audit, allocation_lock, uid)
 
 MAX_PDF = 50 * 1024 * 1024
 Identifier = str
+
+
+def normalized_question_prompt(prompt):
+    text = unicodedata.normalize("NFKC", str(prompt)).casefold()
+    return " ".join(re.findall(r"\w+", text, flags=re.UNICODE))
 
 
 class Module(BaseModel):
@@ -132,6 +138,10 @@ class AnswerWrite(BaseModel):
     answers: dict = Field(max_length=200)
 
 
+class ExamResetWrite(BaseModel):
+    scope: str = Field(min_length=1, max_length=180)
+
+
 class GradeWrite(BaseModel):
     marks: dict = Field(max_length=200)
     feedback: str = Field(default="", max_length=10000)
@@ -140,6 +150,37 @@ class GradeWrite(BaseModel):
 class AnswerKeyImport(BaseModel):
     csv: str = Field(max_length=1024 * 1024)
     questions: list[dict] = Field(min_length=1, max_length=200)
+
+
+class AcademyAssessmentQuestionWrite(BaseModel):
+    id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    kind: Literal["overall", "graduation"]
+    area: str = Field(min_length=1, max_length=120)
+    prompt: str = Field(min_length=1, max_length=10000)
+    choices: list[str] = Field(min_length=2, max_length=8)
+    correct: int = Field(ge=0, le=7)
+    points: int = Field(default=1, ge=1, le=100)
+    explanation: str = Field(min_length=1, max_length=10000)
+    choice_explanations: list[str] = Field(default_factory=list, max_length=8)
+    course_categories: list[str] = Field(default_factory=list, max_length=8)
+    lab_kinds: list[str] = Field(default_factory=list, max_length=8)
+    topics: list[str] = Field(min_length=1, max_length=12)
+
+    @model_validator(mode="after")
+    def validate_assessment_item(self):
+        if self.correct >= len(self.choices) or any(not choice.strip() for choice in self.choices):
+            raise ValueError("Choose a valid answer from at least two non-empty options")
+        if len({choice.casefold().strip() for choice in self.choices}) != len(self.choices):
+            raise ValueError("Answer choices must be distinct")
+        if self.choice_explanations and len(self.choice_explanations) != len(self.choices):
+            raise ValueError("Choice explanations must match the answer options")
+        if any(not value.strip() for value in (self.area, self.prompt, self.explanation, *self.topics)):
+            raise ValueError("Area, prompt, explanation and topics must be non-empty")
+        return self
+
+
+class AcademyAssessmentBankWrite(BaseModel):
+    questions: list[AcademyAssessmentQuestionWrite] = Field(min_length=1, max_length=200)
 
 
 class NewLab(BaseModel):
@@ -208,6 +249,23 @@ def mount_learning(app, factory, settings, identity, administrator, get_db):
     def audit(db, user, action, target):
         db.add(Audit(user_id=user.id, action=action, target=target))
 
+    def reset_cutoff(db, user_id, scope):
+        return db.scalar(select(func.max(ExamReset.created)).where(
+            ExamReset.user_id == user_id, ExamReset.scope.in_(("all", scope)))) or 0
+
+    def reset_is_current(db, item, scope):
+        return item.created > reset_cutoff(db, item.user_id, scope)
+
+    def pending_pretest_reset(db, user_id, vid):
+        marker = db.scalars(select(ExamReset).where(
+            ExamReset.user_id == user_id, ExamReset.scope == f"pretest:{vid}")
+            .order_by(ExamReset.created.desc())).first()
+        if not marker or marker.consumed:
+            return None
+        latest = db.scalar(select(func.max(ProgressTestAttempt.created)).where(
+            ProgressTestAttempt.user_id == user_id, ProgressTestAttempt.version_id == vid)) or 0
+        return marker if marker.created > latest else None
+
     def course(db, cid):
         value = db.get(Course, cid)
         if not value:
@@ -235,6 +293,120 @@ def mount_learning(app, factory, settings, identity, administrator, get_db):
 
     def content_of(v):
         return json.loads(v.content_json)
+
+    def assessment_area(content, module, lab=None, question=None):
+        title = str(content.get("title") or "").casefold()
+        for terms, area in (
+            (("active directory",), "Active Directory"),
+            (("python",), "Python"),
+            (("prompt engineering",), "AI and prompt engineering"),
+            (("kubernetes", "netlab", "network"), "Networking"),
+            (("linux",), "Linux"),
+            (("security",), "Security"),
+        ):
+            if any(term in title for term in terms):
+                return area
+        text = " ".join(str(value or "") for value in (
+            content.get("title"), content.get("category"), module.get("title"),
+            " ".join(module.get("topics", [])), module.get("description"),
+            lab.title if lab else "", lab.kind if lab else "",
+            " ".join(item.get("title", "") for item in json.loads(lab.drills_json)) if lab else "",
+            question.get("prompt") if question else "")).casefold()
+        if any(term in text for term in ("kubernetes", "k8s", "container", "netlab")):
+            return "Networking"
+        if any(term in text for term in ("active directory", "windows domain", "domain controller", "group policy")):
+            return "Active Directory"
+        if any(term in text for term in ("security", "siem", "incident", "threat")):
+            return "Security"
+        if any(term in text for term in ("aws", "azure", "cloud", "vpc", "vnet", "ec2")):
+            return "Cloud"
+        if any(term in text for term in ("vmware", "virtualization", "hypervisor", "proxmox")):
+            return "Virtualization"
+        if any(term in text for term in ("terraform", "ansible", "automation", "infrastructure as code")):
+            return "Automation and infrastructure as code"
+        if any(term in text for term in ("linux", "ubuntu", "shell", "bash", "systemd")):
+            return "Linux"
+        if "python" in text:
+            return "Python"
+        if any(term in text for term in ("network", "routing", "switch", "firewall", "tcp", "dns", "dhcp")):
+            return "Networking"
+        category = str(content.get("category") or "").strip()
+        return {"AI": "AI and prompt engineering", "Cloud": "Cloud", "Security": "Security",
+                "Linux": "Linux", "Networking": "Networking", "Programming": "Python"}.get(category, "IT fundamentals")
+
+    def assessment_bank(db, kind=None):
+        query = select(AcademyAssessmentQuestion)
+        if kind:
+            query = query.where(AcademyAssessmentQuestion.kind == kind)
+        return [{"id": row.id, "kind": row.kind, "area": row.area, "prompt": row.prompt,
+            "choices": json.loads(row.choices_json), "correct": row.correct, "points": row.points,
+            "explanation": row.explanation, "choice_explanations": json.loads(row.choice_explanations_json),
+            "course_categories": json.loads(row.course_categories_json), "lab_kinds": json.loads(row.lab_kinds_json),
+            "topics": json.loads(row.topics_json)}
+            for row in db.scalars(query.order_by(AcademyAssessmentQuestion.area, AcademyAssessmentQuestion.id))]
+
+    def select_assessment_questions(bank):
+        rng = random.SystemRandom()
+        selected = []
+        for source in bank:
+            question = source.copy()
+            choices = list(question["choices"])
+            explanations = list(question.get("choice_explanations", []))
+            indices = list(range(len(choices)))
+            rng.shuffle(indices)
+            question["choices"] = [choices[index] for index in indices]
+            question["correct"] = indices.index(source["correct"])
+            if explanations:
+                question["choice_explanations"] = [explanations[index] for index in indices]
+            selected.append(question)
+        rng.shuffle(selected)
+        return selected
+
+    def assessment_recommendations(db, area_scores):
+        weak_areas = [area for area, score in sorted(area_scores.items(), key=lambda pair: (pair[1]["score"], pair[0]))
+                      if score["score"] < 80]
+        if not weak_areas and area_scores:
+            weak_areas = [area for area, _ in sorted(area_scores.items(), key=lambda pair: (pair[1]["score"], pair[0]))[:2]]
+        available = []
+        for course_row in db.scalars(select(Course).where(Course.published_id.is_not(None))):
+            version_row = db.get(CourseVersion, course_row.published_id)
+            if version_row:
+                available.append((course_row, content_of(version_row)))
+        def course_rank(item):
+            title = item[1]["title"].casefold()
+            return (0 if any(word in title for word in ("beginner", "foundation", "fundamentals", "introduction", "101"))
+                    else 2 if any(word in title for word in ("advanced", "expert")) else 1, title)
+        recommendations, added = [], set()
+        for area in weak_areas:
+            area_detail = area_scores[area]
+            course_categories = set(area_detail.get("course_categories", []))
+            lab_kinds = set(area_detail.get("lab_kinds", []))
+            matching = []
+            for course_row, content in available:
+                module_areas = [assessment_area(content, module,
+                    db.get(Lab, module.get("lab_id")) if module.get("lab_id") else None) for module in content.get("modules", [])]
+                if content.get("category") in course_categories or assessment_area(content, {"title": "", "topics": []}) == area or area in module_areas:
+                    matching.append((course_row, content))
+            for course_row, content in sorted(matching, key=course_rank):
+                key = ("class", course_row.id)
+                if key not in added:
+                    recommendations.append({"type": "class", "id": course_row.published_id, "title": content["title"],
+                        "area": area, "reason": "Strengthen this area with the published class and its ordered modules."})
+                    added.add(key)
+                for module in content.get("modules", []):
+                    lab = db.get(Lab, module.get("lab_id")) if module.get("lab_id") else None
+                    if not lab or lab.id in added:
+                        continue
+                    if lab.kind in lab_kinds or assessment_area(content, module, lab) == area or assessment_area({"title": lab.title}, {"title": "", "topics": []}, lab) == area:
+                        recommendations.append({"type": "lab", "id": lab.id, "title": lab.title, "area": area,
+                            "available": lab.enabled, "reason": "Take this hands-on lab after the related class."})
+                        added.add(lab.id)
+            for lab in db.scalars(select(Lab)):
+                if (lab.kind in lab_kinds or assessment_area({"title": lab.title}, {"title": "", "topics": []}, lab) == area) and lab.id not in added:
+                    recommendations.append({"type": "lab", "id": lab.id, "title": lab.title, "area": area,
+                        "available": lab.enabled, "reason": "Practice this area in the hands-on lab after the recommended class."})
+                    added.add(lab.id)
+        return recommendations
 
     def validate_references(db, content, publishing=False):
         for module in content.modules:
@@ -266,9 +438,11 @@ def mount_learning(app, factory, settings, identity, administrator, get_db):
         content = content_of(db.get(CourseVersion, a.version_id))
         reviewing = user.role == "admin" and user.id != a.user_id
         reveal = a.status != "in_progress"
+        display_status = ("closed" if a.status == "in_progress" and not reset_is_current(
+            db, a, f"final:{a.version_id}") else a.status)
         result = {"id": a.id, "version_id": a.version_id, "title": content["title"],
                   "instructions": content["exam"].get("instructions", ""),
-                  "status": a.status, "score": a.score, "passed": a.passed,
+                  "status": display_status, "score": a.score, "passed": a.passed,
                   "created": a.created, "submitted": a.submitted,
                   "answers": json.loads(a.answers_json), "feedback": a.feedback if reviewing or reveal else "",
                   "passing_score": content["exam"]["passing_score"],
@@ -303,6 +477,45 @@ def mount_learning(app, factory, settings, identity, administrator, get_db):
         if not value or value.user_id != user.id:
             raise HTTPException(404, "Progress test attempt not found")
         return value
+
+    def academy_assessment_attempt(db, aid, user):
+        value = db.get(AcademyAssessmentAttempt, aid)
+        if not value or (value.user_id != user.id and user.role != "admin"):
+            raise HTTPException(404, "Academy assessment attempt not found")
+        return value
+
+    def academy_assessment_view(attempt, reveal=False, include_user=None):
+        snapshot = json.loads(attempt.question_snapshot_json)
+        order = json.loads(attempt.question_order_json)
+        positions = {qid: index for index, qid in enumerate(order)}
+        answers = json.loads(attempt.answers_json)
+        questions = []
+        for question in sorted(snapshot, key=lambda item: positions.get(item["id"], len(positions))):
+            public = {key: question[key] for key in ("id", "prompt", "choices", "points")}
+            if reveal:
+                selected = answers.get(question["id"])
+                choices = question.get("choice_explanations", [])
+                public.update({"area": question["area"], "topics": question.get("topics", []),
+                    "explanation": question.get("explanation", ""),
+                    "selected_explanation": choices[selected] if type(selected) is int and selected < len(choices) else ""})
+            questions.append(public)
+        result = {"id": attempt.id, "kind": attempt.kind, "status": attempt.status,
+            "score": attempt.score, "passed": attempt.passed, "created": attempt.created,
+            "submitted": attempt.submitted, "answers": answers, "questions": questions,
+            "area_scores": json.loads(attempt.area_scores_json),
+            "recommendations": json.loads(attempt.recommendations_json) if reveal else []}
+        if reveal:
+            result["marks"] = json.loads(attempt.marks_json)
+            result["correct_answers"] = {item["id"]: item["correct"] for item in snapshot}
+        if include_user is not None:
+            result["username"] = include_user
+        return result
+
+    def assessment_summary(attempt):
+        return {"id": attempt.id, "kind": attempt.kind, "status": attempt.status,
+            "score": attempt.score, "passed": attempt.passed, "created": attempt.created,
+            "submitted": attempt.submitted, "area_scores": json.loads(attempt.area_scores_json),
+            "recommendations": json.loads(attempt.recommendations_json)}
 
     def progress_questions(content):
         return [(module, question) for module in content["modules"]
@@ -488,6 +701,8 @@ def mount_learning(app, factory, settings, identity, administrator, get_db):
         for attempt in db.scalars(select(ModuleQuizAttempt).where(
                 ModuleQuizAttempt.version_id == vid, ModuleQuizAttempt.user_id == auth[0].id)
                 .order_by(ModuleQuizAttempt.created.desc())):
+            if not reset_is_current(db, attempt, f"quiz:{vid}:{attempt.module_id}"):
+                continue
             if attempt.module_id not in quiz_results:
                 quiz_results[attempt.module_id] = {"attempt_id": attempt.id, "status": attempt.status,
                                                    "score": attempt.score, "passed": bool(attempt.passed),
@@ -500,12 +715,18 @@ def mount_learning(app, factory, settings, identity, administrator, get_db):
         progress_attempts = list(db.scalars(select(ProgressTestAttempt).where(
             ProgressTestAttempt.version_id == vid, ProgressTestAttempt.user_id == auth[0].id)
             .order_by(ProgressTestAttempt.created.desc())))
+        current_progress_attempts = [item for item in progress_attempts
+                                     if reset_is_current(db, item, f"pretest:{vid}")]
+        pretest_reopened = pending_pretest_reset(db, auth[0].id, vid) is not None
         return {"id": v.id, "course_id": v.course_id, "number": v.number,
                 "content": learner_content(content_of(v)),
                 "completed": json.loads(p.completed_json) if p else [],
                 "current_module": p.current_module if p else "",
                 "module_quiz_results": quiz_results,
-                "progress_test_attempt": progress_test_view(db, progress_attempts[0]) if progress_attempts else None,
+                "pretest_available": bool(content_of(v).get("progress_test_enabled") and
+                    (not p.current_module or pretest_reopened)),
+                "progress_test_attempt": progress_test_view(db, current_progress_attempts[0])
+                    if current_progress_attempts else None,
                 "attempts": [attempt_view(db, a, auth[0]) for a in db.scalars(select(ExamAttempt).where(
                     ExamAttempt.version_id == vid, ExamAttempt.user_id == auth[0].id).order_by(ExamAttempt.created.desc()))]}
 
@@ -533,6 +754,10 @@ def mount_learning(app, factory, settings, identity, administrator, get_db):
             raise HTTPException(409, "Pass this module's quiz before marking it complete")
         if body.complete: completed.add(body.module_id)
         p.completed_json, p.current_module = json.dumps(sorted(completed)), body.module_id
+        pending = pending_pretest_reset(db, auth[0].id, vid)
+        if pending:
+            pending.consumed = True
+            audit(db, auth[0], "skip_reset_pretest", vid)
         db.commit(); return {"completed": sorted(completed), "current_module": p.current_module}
 
     @app.post("/api/course-versions/{vid}/attempts")
@@ -542,8 +767,9 @@ def mount_learning(app, factory, settings, identity, administrator, get_db):
         if not p or (data["exam"]["require_modules"] and not {m["id"] for m in data["modules"] if m["required"]}
                       .issubset(set(json.loads(p.completed_json)))):
             raise HTTPException(409, "Complete the required modules before the final exam")
-        existing = list(db.scalars(select(ExamAttempt).where(ExamAttempt.version_id == vid,
-                        ExamAttempt.user_id == auth[0].id)))
+        existing = [item for item in db.scalars(select(ExamAttempt).where(
+            ExamAttempt.version_id == vid, ExamAttempt.user_id == auth[0].id))
+            if reset_is_current(db, item, f"final:{vid}")]
         current = next((a for a in existing if a.status == "in_progress"), None)
         if current: return attempt_view(db, current, auth[0])
         if any(a.status == "awaiting_review" for a in existing):
@@ -589,9 +815,10 @@ def mount_learning(app, factory, settings, identity, administrator, get_db):
         if not progress(db, vid, auth[0]):
             raise HTTPException(409, "Open the class before starting a module quiz")
         questions = module_quiz_questions(db, vid, module_id, auth[0])
-        existing = list(db.scalars(select(ModuleQuizAttempt).where(
+        existing = [item for item in db.scalars(select(ModuleQuizAttempt).where(
             ModuleQuizAttempt.version_id == vid, ModuleQuizAttempt.module_id == module_id,
-            ModuleQuizAttempt.user_id == auth[0].id).order_by(ModuleQuizAttempt.created.desc())))
+            ModuleQuizAttempt.user_id == auth[0].id).order_by(ModuleQuizAttempt.created.desc()))
+            if reset_is_current(db, item, f"quiz:{vid}:{module_id}")]
         current = next((item for item in existing if item.status == "in_progress"), None)
         if current:
             return module_quiz_view(db, current, auth[0])
@@ -607,12 +834,17 @@ def mount_learning(app, factory, settings, identity, administrator, get_db):
 
     @app.get("/api/module-quiz-attempts/{aid}")
     def read_module_quiz(aid: str, auth=Depends(identity), db=Depends(get_db)):
-        return module_quiz_view(db, module_quiz_attempt(db, aid, auth[0]), auth[0])
+        item = module_quiz_attempt(db, aid, auth[0])
+        if item.status == "in_progress" and not reset_is_current(db, item,
+                f"quiz:{item.version_id}:{item.module_id}"):
+            raise HTTPException(409, "This attempt was closed by an administrator reset")
+        return module_quiz_view(db, item, auth[0])
 
     def write_module_quiz(aid, body, auth, db, submit=False):
         allocation_lock(db)
         attempt = module_quiz_attempt(db, aid, auth[0])
-        if attempt.status != "in_progress":
+        if attempt.status != "in_progress" or not reset_is_current(db, attempt,
+                f"quiz:{attempt.version_id}:{attempt.module_id}"):
             raise HTTPException(409, "This module quiz attempt is already submitted")
         questions = module_quiz_questions(db, attempt.version_id, attempt.module_id, auth[0])
         answers = validated_answers(questions, body.answers, submit)
@@ -647,14 +879,15 @@ def mount_learning(app, factory, settings, identity, administrator, get_db):
         pairs = progress_questions(content)
         if not pairs or any(len(module.get("quiz", [])) < 8 for module in content["modules"]):
             raise HTTPException(409, "The class pretest is not configured for every module")
-        attempts = list(db.scalars(select(ProgressTestAttempt).where(
+        attempts = [item for item in db.scalars(select(ProgressTestAttempt).where(
             ProgressTestAttempt.version_id == vid, ProgressTestAttempt.user_id == auth[0].id)
-            .order_by(ProgressTestAttempt.created.desc())))
+            .order_by(ProgressTestAttempt.created.desc()))
+            if reset_is_current(db, item, f"pretest:{vid}")]
         current = next((item for item in attempts if item.status == "in_progress"), None)
         if current:
             db.commit()
             return progress_test_view(db, current)
-        if p.current_module:
+        if p.current_module and not pending_pretest_reset(db, auth[0].id, vid):
             raise HTTPException(409, "The class pretest is only available when the class first opens")
         p.current_module = content["modules"][0]["id"]
         order = [q["id"] for _, q in pairs]
@@ -671,7 +904,8 @@ def mount_learning(app, factory, settings, identity, administrator, get_db):
     def submit_progress_test(aid: str, body: AnswerWrite, auth=Depends(identity), db=Depends(get_db)):
         allocation_lock(db)
         attempt = progress_test_attempt(db, aid, auth[0])
-        if attempt.status != "in_progress":
+        if attempt.status != "in_progress" or not reset_is_current(db, attempt,
+                f"pretest:{attempt.version_id}"):
             raise HTTPException(409, "This pretest attempt is already submitted")
         version_row = db.get(CourseVersion, attempt.version_id); content = content_of(version_row)
         pairs = progress_questions(content)
@@ -714,7 +948,8 @@ def mount_learning(app, factory, settings, identity, administrator, get_db):
 
     def write_answers(aid, body, auth, db, submit=False):
         allocation_lock(db); a = attempt(db, aid, auth[0])
-        if a.user_id != auth[0].id or a.status != "in_progress":
+        if a.user_id != auth[0].id or a.status != "in_progress" or not reset_is_current(
+                db, a, f"final:{a.version_id}"):
             raise HTTPException(409, "This attempt can no longer be edited")
         content = content_of(db.get(CourseVersion, a.version_id)); exam = content["exam"]
         answers = validated_answers(exam["questions"], body.answers, submit)
@@ -744,16 +979,252 @@ def mount_learning(app, factory, settings, identity, administrator, get_db):
             if module:
                 quiz_attempts.append({"id": item.id, "version_id": item.version_id,
                     "class_title": content["title"], "module_id": item.module_id,
-                    "module_title": module["title"], "status": item.status,
+                    "module_title": module["title"], "status": "closed" if item.status == "in_progress"
+                    and not reset_is_current(db, item, f"quiz:{item.version_id}:{item.module_id}")
+                    else item.status,
                     "score": item.score, "passed": item.passed, "created": item.created})
+        pretest_attempts = []
+        for item in db.scalars(select(ProgressTestAttempt).where(
+                ProgressTestAttempt.user_id == auth[0].id).order_by(ProgressTestAttempt.created.desc())):
+            content = content_of(db.get(CourseVersion, item.version_id))
+            pretest_attempts.append({"id": item.id, "version_id": item.version_id,
+                "class_title": content["title"], "status": "closed" if item.status == "in_progress"
+                and not reset_is_current(db, item, f"pretest:{item.version_id}") else item.status,
+                "score": item.score, "created": item.created})
         return {"enrollments": [{"version_id": p.version_id,
                  "title": content_of(db.get(CourseVersion, p.version_id))["title"],
                  "completed": len(json.loads(p.completed_json)),
                  "module_count": len(content_of(db.get(CourseVersion, p.version_id))["modules"])}
                  for p in db.scalars(select(CourseProgress).where(CourseProgress.user_id == auth[0].id))],
                 "module_quiz_attempts": quiz_attempts,
+                "pretest_attempts": pretest_attempts,
                 "attempts": [attempt_view(db, a, auth[0]) for a in db.scalars(select(ExamAttempt).where(
                     ExamAttempt.user_id == auth[0].id).order_by(ExamAttempt.created.desc()))]}
+
+    @app.get("/api/academy-assessments")
+    def academy_assessment_catalog(auth=Depends(identity), db=Depends(get_db)):
+        bank = assessment_bank(db)
+        area_counts, total_counts = {}, {"overall": 0, "graduation": 0}
+        for question in bank:
+            total_counts[question["kind"]] += 1
+            area_counts.setdefault(question["kind"], {})
+            area_counts[question["kind"]][question["area"]] = area_counts[question["kind"]].get(question["area"], 0) + 1
+        attempts = list(db.scalars(select(AcademyAssessmentAttempt).where(
+            AcademyAssessmentAttempt.user_id == auth[0].id).order_by(AcademyAssessmentAttempt.created.desc())))
+        return {"max_questions": 100, "passing_score": 80,
+                "assessments": {kind: {"question_count": total_counts[kind], "area_count": len(area_counts.get(kind, {}))}
+                                for kind in ("overall", "graduation")},
+                "attempts": [{**assessment_summary(item), "status": "closed" if
+                    item.status == "in_progress" and not reset_is_current(db, item,
+                    f"assessment:{item.kind}") else item.status} for item in attempts]}
+
+    @app.post("/api/academy-assessments/{kind}/attempts")
+    def begin_academy_assessment(kind: str, auth=Depends(identity), db=Depends(get_db)):
+        allocation_lock(db)
+        if kind not in ("overall", "graduation"):
+            raise HTTPException(404, "Academy assessment not found")
+        existing = [item for item in db.scalars(select(AcademyAssessmentAttempt).where(
+            AcademyAssessmentAttempt.user_id == auth[0].id,
+            AcademyAssessmentAttempt.kind == kind).order_by(AcademyAssessmentAttempt.created.desc()))
+            if reset_is_current(db, item, f"assessment:{kind}")]
+        current = next((item for item in existing if item.status == "in_progress"), None)
+        if current:
+            return academy_assessment_view(current)
+        selected = select_assessment_questions(assessment_bank(db, kind))
+        if not selected:
+            raise HTTPException(409, "The administrator has not loaded the separate Academy assessment question bank yet")
+        order = [item["id"] for item in selected]
+        previous_order = json.loads(existing[0].question_order_json) if existing else []
+        if len(order) > 1 and order == previous_order:
+            order.reverse()
+        attempt = AcademyAssessmentAttempt(user_id=auth[0].id, kind=kind,
+            question_snapshot_json=json.dumps(selected), question_order_json=json.dumps(order))
+        db.add(attempt); db.flush(); audit(db, auth[0], "start_academy_assessment", f"{kind}:{attempt.id}")
+        db.commit()
+        return academy_assessment_view(attempt)
+
+    def write_academy_assessment(aid, body, auth, db, submit=False):
+        allocation_lock(db)
+        attempt = academy_assessment_attempt(db, aid, auth[0])
+        if attempt.user_id != auth[0].id or attempt.status != "in_progress" or not reset_is_current(
+                db, attempt, f"assessment:{attempt.kind}"):
+            raise HTTPException(409, "This assessment attempt can no longer be edited")
+        snapshot = json.loads(attempt.question_snapshot_json)
+        question_ids = {question["id"] for question in snapshot}
+        answers = body.answers
+        if set(answers) - question_ids:
+            raise HTTPException(422, "Answer contains an unknown question")
+        for question in snapshot:
+            answer = answers.get(question["id"])
+            if answer is None:
+                if submit:
+                    raise HTTPException(422, "Answer every question before submitting")
+            elif type(answer) is not int or not 0 <= answer < len(question["choices"]):
+                raise HTTPException(422, "Choose a valid answer option")
+        attempt.answers_json = json.dumps(answers)
+        if submit:
+            marks = {question["id"]: question["points"] if answers[question["id"]] == question["correct"] else 0
+                     for question in snapshot}
+            area_scores = {}
+            for question in snapshot:
+                area = area_scores.setdefault(question["area"], {"earned": 0, "possible": 0, "correct": 0,
+                    "question_count": 0, "course_categories": [], "lab_kinds": [], "topics": []})
+                area["earned"] += marks[question["id"]]
+                area["possible"] += question["points"]
+                area["correct"] += int(marks[question["id"]] > 0)
+                area["question_count"] += 1
+                for field in ("course_categories", "lab_kinds", "topics"):
+                    area[field] = sorted(set(area[field]) | set(question.get(field, [])))
+            for value in area_scores.values():
+                value["score"] = round(value["earned"] * 100 / value["possible"], 2)
+            total_possible = sum(question["points"] for question in snapshot)
+            attempt.score = round(sum(marks.values()) * 100 / total_possible, 2)
+            attempt.passed = attempt.score >= 80 if attempt.kind == "graduation" else None
+            attempt.marks_json = json.dumps(marks)
+            attempt.area_scores_json = json.dumps(area_scores)
+            attempt.recommendations_json = json.dumps(assessment_recommendations(
+                db, area_scores) if attempt.kind == "overall" else [])
+            attempt.status, attempt.submitted = "graded", time.time()
+            audit(db, auth[0], "submit_academy_assessment", f"{attempt.kind}:{attempt.id}")
+        db.commit()
+        return academy_assessment_view(attempt, reveal=submit or attempt.status == "graded")
+
+    @app.get("/api/academy-assessments/attempts/{aid}")
+    def read_academy_assessment(aid: str, auth=Depends(identity), db=Depends(get_db)):
+        item = academy_assessment_attempt(db, aid, auth[0])
+        if item.status == "in_progress" and not reset_is_current(db, item,
+                f"assessment:{item.kind}"):
+            raise HTTPException(409, "This attempt was closed by an administrator reset")
+        return academy_assessment_view(item, reveal=item.status == "graded")
+
+    @app.put("/api/academy-assessments/attempts/{aid}")
+    def save_academy_assessment(aid: str, body: AnswerWrite, auth=Depends(identity), db=Depends(get_db)):
+        return write_academy_assessment(aid, body, auth, db)
+
+    @app.post("/api/academy-assessments/attempts/{aid}/submit")
+    def submit_academy_assessment(aid: str, body: AnswerWrite, auth=Depends(identity), db=Depends(get_db)):
+        return write_academy_assessment(aid, body, auth, db, True)
+
+    @app.get("/api/admin/academy-assessment-results")
+    def admin_academy_assessment_results(auth=Depends(administrator), db=Depends(get_db)):
+        rows = list(db.scalars(select(AcademyAssessmentAttempt).order_by(AcademyAssessmentAttempt.created)))
+        previous, results = {}, []
+        for item in rows:
+            username = db.get(User, item.user_id).username
+            key = (item.user_id, item.kind)
+            prior = previous.setdefault(key, {})
+            area_scores = json.loads(item.area_scores_json)
+            growth = {area: None if area not in prior else round(value["score"] - prior[area], 2)
+                      for area, value in area_scores.items()}
+            previous[key] = {area: value["score"] for area, value in area_scores.items()}
+            results.append({**assessment_summary(item), "username": username, "area_growth": growth})
+        return list(reversed(results))
+
+    def exam_reset_options(db, user_id):
+        options = [
+            {"scope": f"assessment:{kind}", "label": label}
+            for kind, label in (("overall", "Academy Overall assessment"),
+                                ("graduation", "Academy Graduation assessment"))]
+        version_ids = {item.version_id for item in db.scalars(select(CourseProgress).where(
+            CourseProgress.user_id == user_id))}
+        for model in (ExamAttempt, ProgressTestAttempt, ModuleQuizAttempt):
+            version_ids.update(item.version_id for item in db.scalars(select(model).where(
+                model.user_id == user_id)))
+        for vid in sorted(version_ids):
+            row = db.get(CourseVersion, vid)
+            if not row:
+                continue
+            content = content_of(row)
+            name = f"{content['title']} (version {row.number})"
+            if content.get("progress_test_enabled"):
+                options.append({"scope": f"pretest:{vid}", "label": f"{name} · opening pretest"})
+            else:
+                for module in content["modules"]:
+                    if module.get("quiz"):
+                        options.append({"scope": f"quiz:{vid}:{module['id']}",
+                                        "label": f"{name} · {module['title']} quiz"})
+            options.append({"scope": f"final:{vid}", "label": f"{name} · final exam"})
+        return options
+
+    @app.get("/api/admin/users/{user_id}/exam-resets")
+    def admin_exam_reset_catalog(user_id: str, auth=Depends(administrator), db=Depends(get_db)):
+        user = db.get(User, user_id)
+        if not user:
+            raise HTTPException(404, "Account not found")
+        return {"username": user.username, "options": exam_reset_options(db, user_id)}
+
+    @app.post("/api/admin/users/{user_id}/exam-resets")
+    def admin_reset_exam(user_id: str, body: ExamResetWrite,
+                         auth=Depends(administrator), db=Depends(get_db)):
+        allocation_lock(db)
+        user = db.get(User, user_id)
+        if not user:
+            raise HTTPException(404, "Account not found")
+        options = exam_reset_options(db, user_id)
+        if body.scope != "all" and body.scope not in {item["scope"] for item in options}:
+            raise HTTPException(422, "Select an available exam")
+        marker = ExamReset(user_id=user_id, scope=body.scope, created=time.time())
+        db.add(marker)
+        db.flush()
+        if body.scope == "all":
+            for option in options:
+                if option["scope"].startswith("pretest:"):
+                    db.add(ExamReset(user_id=user_id, scope=option["scope"],
+                                     created=time.time()))
+        audit(db, auth[0], "reset_exam_attempts", marker.id)
+        db.commit()
+        return {"message": "Exam retake opened. Past results and class progress were retained.",
+                "scope": body.scope, "reset_id": marker.id}
+
+    @app.put("/api/admin/academy-assessments/bank")
+    def replace_academy_assessment_bank(body: AcademyAssessmentBankWrite,
+                                        auth=Depends(administrator), db=Depends(get_db)):
+        allocation_lock(db)
+        counts = {"overall": 0, "graduation": 0}
+        areas_by_kind = {"overall": set(), "graduation": set()}
+        seen_ids, seen_prompts = set(), set()
+        prompts_from_classes = set()
+        for course_row in db.scalars(select(Course)):
+            content_versions = [json.loads(course_row.draft_json)]
+            content_versions.extend(content_of(version_row) for version_row in db.scalars(
+                select(CourseVersion).where(CourseVersion.course_id == course_row.id)))
+            for content in content_versions:
+                source_questions = [question for module in content.get("modules", [])
+                                    for question in module.get("quiz", [])]
+                source_questions.extend(content.get("exam", {}).get("questions", []))
+                prompts_from_classes.update(normalized_question_prompt(question.get("prompt", ""))
+                                            for question in source_questions if question.get("prompt"))
+        for question in body.questions:
+            if question.id in seen_ids:
+                raise HTTPException(422, "Assessment question IDs must be unique")
+            seen_ids.add(question.id)
+            prompt = normalized_question_prompt(question.prompt)
+            if prompt in seen_prompts:
+                raise HTTPException(422, "Academy-wide assessments cannot repeat a question prompt")
+            if prompt in prompts_from_classes:
+                raise HTTPException(422, "Assessment questions cannot repeat module quiz or class exam prompts")
+            seen_prompts.add(prompt)
+            counts[question.kind] += 1
+            areas_by_kind[question.kind].add(question.area.strip())
+        if any(count > 100 for count in counts.values()):
+            raise HTTPException(422, "Each Academy assessment may contain no more than 100 questions")
+        if any(count == 0 for count in counts.values()):
+            raise HTTPException(422, "Load separate overall and graduation question sets")
+        if areas_by_kind["overall"] != areas_by_kind["graduation"]:
+            raise HTTPException(422, "Overall and graduation question sets must cover the same knowledge areas")
+        for old in db.scalars(select(AcademyAssessmentQuestion)):
+            db.delete(old)
+        db.flush()
+        for question in body.questions:
+            db.add(AcademyAssessmentQuestion(id=question.id, kind=question.kind, area=question.area.strip(),
+                prompt=question.prompt.strip(), choices_json=json.dumps(question.choices), correct=question.correct,
+                points=question.points, explanation=question.explanation.strip(),
+                choice_explanations_json=json.dumps(question.choice_explanations),
+                course_categories_json=json.dumps(question.course_categories),
+                lab_kinds_json=json.dumps(question.lab_kinds), topics_json=json.dumps(question.topics)))
+        audit(db, auth[0], "replace_academy_assessment_bank", f"overall:{counts['overall']}:graduation:{counts['graduation']}")
+        db.commit()
+        return {"counts": counts, "areas": sorted({question.area for question in body.questions})}
 
     @app.get("/api/admin/exam-attempts")
     def grading_queue(auth=Depends(administrator), db=Depends(get_db)):

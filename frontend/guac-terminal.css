@@ -1,0 +1,8 @@
+:root { color-scheme: dark; font: 14px system-ui, sans-serif; }
+* { box-sizing: border-box; }
+html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #03070d; color: #d7e5f1; }
+#terminal { display: flex; flex-direction: column; width: 100%; height: 100%; }
+#status { flex: none; margin: 0; padding: 6px 10px; background: #102337; color: #c6d7e6; font-size: 12px; }
+#screen { position: relative; flex: 1; min-height: 0; overflow: hidden; outline: none; background: #000; }
+#screen:focus-visible { box-shadow: inset 0 0 0 2px #43c7dd; }
+.guac-display { position: absolute; top: 0; left: 0; transform-origin: top left; }

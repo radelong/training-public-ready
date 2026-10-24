@@ -139,10 +139,9 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 :root[data-theme="dark"] th { background: var(--surface-soft); color: var(--muted); }
 :root[data-theme="dark"] .module-nav button.selected { background: var(--cyanlight); color: var(--ink); border-color: var(--cyan); }
 :root[data-theme="dark"] .module-nav small, :root[data-theme="dark"] .editor-help { color: var(--muted); }
-:root[data-theme="dark"] .exam-choice, :root[data-theme="dark"] .editor-item, :root[data-theme="dark"] .slide-frame { border-color: var(--line); }
+:root[data-theme="dark"] .exam-choice, :root[data-theme="dark"] .editor-item { border-color: var(--line); }
 :root[data-theme="dark"] .exam-choice { background: var(--surface-soft); }
 :root[data-theme="dark"] .exam-summary { background: var(--cyanlight); color: var(--ink); }
-:root[data-theme="dark"] .slide-frame { background: #263f50; }
 :root[data-theme="dark"] #toast { background: #315269; color: #fff; }
 :root[data-theme="dark"] .card-visual .motif { color: var(--cyan); }
 :root[data-theme="dark"] .public-actions .secondary { background: transparent; color: #effaff; border-color: #78d4e6; }
@@ -166,3 +165,40 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .login-panel form { padding: 20px; }
 }
 @media (prefers-reduced-motion: reduce) { button, a, input, textarea, select { transition: none; } }
+
+.catalog-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 18px;
+  margin: 0 0 20px;
+  padding: 14px 18px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.catalog-filters legend { padding: 0 7px; font-weight: 700; }
+.catalog-filters label { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; }
+.catalog-filters input { accent-color: var(--cyan); width: 17px; height: 17px; }
+.catalog-filters p { width: 100%; margin: 0; }
+.module-quiz-status { margin: 22px 0; background: var(--surface-soft); }
+.module-quiz-status h3 { margin: 0 0 8px; }
+.module-quiz-status p { margin: 0 0 12px; color: var(--muted); }
+.catalog-details { margin-top: 14px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-soft); }
+.catalog-details p { margin: 0 0 7px; font-size: 14px; }
+.catalog-details p:last-child { margin-bottom: 0; }
+.exercise-diagram { margin: 16px 0; padding: 12px; border: 1px solid var(--line); border-radius: 8px; }
+.exercise-diagram img { display: block; width: 100%; max-height: 420px; object-fit: contain; }
+.exercise-diagram figcaption { margin-top: 8px; font-size: 13px; color: var(--muted); }
+
+/* Paired labs keep both role-specific terminals visible and independently reconnectable. */
+.console-stack { display: grid; gap: 18px; margin-top: 22px; }
+.console-window { min-width: 0; overflow: hidden; border: 1px solid #284454; border-radius: 12px; background: #0f1f2e; box-shadow: var(--shadow); }
+.console-window .console-heading { min-height: 52px; }
+.console-window iframe { display: block; width: 100%; height: 430px; border: 0; background: #0f1f2e; }
+.console-window .console-placeholder { min-height: 300px; }
+@media (max-width: 520px) {
+  .console-stack { gap: 14px; }
+  .console-window iframe { height: 390px; }
+  .console-window .console-placeholder { min-height: 260px; }
+}

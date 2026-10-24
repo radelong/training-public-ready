@@ -228,7 +228,7 @@
         "id": "k8s-07-configmap-secret",
         "title": "Missing ConfigMap and Secret",
         "brief": "The 'cfgapp' Deployment is stuck. The pod never reaches Running --\nit sits in ContainerCreating or CreateContainerConfigError. There are no\napplication logs because the container was never created.",
-        "goal": "Create the configuration the Deployment expects so the pod runs:\n  - a ConfigMap named 'app-config' with key GREETING = hello-netlab\n  - a Secret named 'app-secret' with key token = example-only-token\nSuccess = pod Running, GREETING visible in its environment, and the ConfigMap\nmounted at /etc/appconfig.",
+        "goal": "Create the configuration the Deployment expects so the pod runs:\n  - a ConfigMap named 'app-config' with key GREETING = hello-netlab\n  - a Secret named 'app-secret' with key token = s3cr3t-token\nSuccess = pod Running, GREETING visible in its environment, and the ConfigMap\nmounted at /etc/appconfig.",
         "tools": "kubectl create configmap/secret, describe pod, exec",
         "time": "20 min",
         "level": "1"
@@ -267,9 +267,358 @@
     "title": "Linux Lab",
     "kind": "linux",
     "enabled": false,
-    "description": "Reserved for the Linux training environment you will provide. Activate it after the offline template is installed and validated.",
+    "description": "Build practical command-line skills through guided filesystem, package, account, permission, service, networking, SSH and troubleshooting exercises in an isolated Ubuntu 26.04 VM.",
     "cores": 2,
-    "memory": 2048,
-    "drills": []
+    "memory": 4096,
+    "drills": [
+      {
+        "id": "man-pages",
+        "title": "Read manuals",
+        "brief": "Guided practice: read manuals. Start displays a complete walkthrough. Run lab shell in the Academy terminal to perform the commands.",
+        "goal": "Navigate man mkdir and man grep: / to search, n/N next/previous, Space/b page, g/G top/bottom, q quit. Save -p to ~/lab/man-pages/mkdir-option.txt and -R to grep-option.txt after finding their meanings.",
+        "tools": "man, less",
+        "time": "15 min",
+        "level": "1",
+        "estimated_minutes": 15,
+        "topics": [
+          "Manual pages",
+          "Pager navigation",
+          "Command options"
+        ]
+      },
+      {
+        "id": "files",
+        "title": "Create files and directories",
+        "brief": "Guided practice: create files and directories. Start displays a complete walkthrough. Run lab shell in the Academy terminal to perform the commands.",
+        "goal": "Create /home/student/lab/files/projects/warehouse and an empty notes.txt inside it.",
+        "tools": "pwd, ls, mkdir, touch",
+        "time": "10 min",
+        "level": "1",
+        "estimated_minutes": 10,
+        "topics": [
+          "Filesystem paths",
+          "Directory creation",
+          "File creation"
+        ]
+      },
+      {
+        "id": "edit",
+        "title": "Edit a service configuration",
+        "brief": "Guided practice: edit a service configuration. Start displays a complete walkthrough. Run lab shell in the Academy terminal to perform the commands.",
+        "goal": "Edit /home/student/lab/edit/service.conf: keep service=warehouse; set environment=production and port=9090. Exactly three lines.",
+        "tools": "cat, nano",
+        "time": "10 min",
+        "level": "1",
+        "estimated_minutes": 10,
+        "topics": [
+          "Text editors",
+          "Configuration files",
+          "Input validation"
+        ]
+      },
+      {
+        "id": "copy-move",
+        "title": "Copy and move operational files",
+        "brief": "Guided practice: copy and move operational files. Start displays a complete walkthrough. Run lab shell in the Academy terminal to perform the commands.",
+        "goal": "In /home/student/lab/copy-move: copy staging/inventory.txt to archive/inventory.txt; move staging/shipment.txt to archive/shipment.txt. Preserve contents.",
+        "tools": "cp, mv, ls",
+        "time": "10 min",
+        "level": "1",
+        "estimated_minutes": 10,
+        "topics": [
+          "File operations",
+          "Relative paths",
+          "Copy and move"
+        ]
+      },
+      {
+        "id": "search",
+        "title": "Find files and search content",
+        "brief": "Guided practice: find files and search content. Start displays a complete walkthrough. Run lab shell in the Academy terminal to perform the commands.",
+        "goal": "In /home/student/lab/search, save sorted relative paths of all *.log files under data to logs.txt, and all files containing ERROR to errors.txt. One path per line.",
+        "tools": "find, grep, sort",
+        "time": "15 min",
+        "level": "1",
+        "estimated_minutes": 15,
+        "topics": [
+          "find",
+          "grep",
+          "Sorting search results"
+        ]
+      },
+      {
+        "id": "history",
+        "title": "View and clear shell history",
+        "brief": "Guided practice: view and clear shell history. Start displays a complete walkthrough. Run lab shell in the Academy terminal to perform the commands.",
+        "goal": "In your interactive Bash shell, source ~/lab/history/session.env. View seeded history, save it to before.txt, then clear memory AND write the empty history file. Use leading spaces for clear/write commands after HISTCONTROL=ignorespace is set. Restore normal HISTFILE afterward.",
+        "tools": "history, Bash",
+        "time": "10 min",
+        "level": "1",
+        "estimated_minutes": 10,
+        "topics": [
+          "Bash history",
+          "Shell sessions",
+          "Command recall"
+        ]
+      },
+      {
+        "id": "apt",
+        "title": "Update and upgrade offline packages",
+        "brief": "Guided practice: update and upgrade offline packages. Start displays a complete walkthrough. Run lab shell in the Academy terminal to perform the commands.",
+        "goal": "Run sudo apt update and sudo apt upgrade -y. Upgrade the real local lab-inventory package from 1.0 to 2.0. Only the offline training repository is configured.",
+        "tools": "apt, dpkg-query",
+        "time": "15 min",
+        "level": "1",
+        "estimated_minutes": 15,
+        "topics": [
+          "APT",
+          "dpkg",
+          "Offline package maintenance"
+        ]
+      },
+      {
+        "id": "users-groups",
+        "title": "Create operational users and groups",
+        "brief": "Guided practice: create operational users and groups. Start displays a complete walkthrough. Run lab shell in the Academy terminal to perform the commands.",
+        "goal": "Create archiveops and archivist: primary group archiveops, home /home/archivist owned by archivist:archiveops with mode 755, shell /bin/bash.",
+        "tools": "useradd, groupadd, id",
+        "time": "15 min",
+        "level": "1",
+        "estimated_minutes": 15,
+        "topics": [
+          "User accounts",
+          "Groups",
+          "Account verification"
+        ]
+      },
+      {
+        "id": "permissions",
+        "title": "Apply owners and POSIX modes",
+        "brief": "Guided practice: apply owners and posix modes. Start displays a complete walkthrough. Run lab shell in the Academy terminal to perform the commands.",
+        "goal": "Set /home/student/lab/permissions owner/group student:analysts, mode 750; report.txt owner/group student:analysts, mode 640. Preserve contents.",
+        "tools": "chown, chmod, stat",
+        "time": "15 min",
+        "level": "1",
+        "estimated_minutes": 15,
+        "topics": [
+          "POSIX ownership",
+          "File modes",
+          "stat"
+        ]
+      },
+      {
+        "id": "df",
+        "title": "Read filesystem capacity",
+        "brief": "Guided practice: read filesystem capacity. Start displays a complete walkthrough. Run lab shell in the Academy terminal to perform the commands.",
+        "goal": "Run df -hT ~/lab/df and save output to ~/lab/df/filesystem.txt. Save the actual filesystem type to type.txt and mount point to mountpoint.txt. Distinguish disk capacity from RAM.",
+        "tools": "df, awk",
+        "time": "10 min",
+        "level": "1",
+        "estimated_minutes": 10,
+        "topics": [
+          "Filesystem capacity",
+          "df",
+          "Command output processing"
+        ]
+      },
+      {
+        "id": "mounting",
+        "title": "Mount a directory read-only",
+        "brief": "Guided practice: mount a directory read-only. Start displays a complete walkthrough. Run lab shell in the Academy terminal to perform the commands.",
+        "goal": "Bind-mount ~/lab/mounting/source onto ~/lab/mounting/target, then remount the bind read-only. Verify with findmnt and read target/manifest.txt. Leave the read-only bind mounted for status.",
+        "tools": "mount, umount, findmnt",
+        "time": "20 min",
+        "level": "2",
+        "estimated_minutes": 20,
+        "topics": [
+          "Mount points",
+          "Read-only bind mounts",
+          "Unmounting"
+        ]
+      },
+      {
+        "id": "ip-addresses",
+        "title": "Read interfaces and IPv4 addressing",
+        "brief": "Guided practice: read interfaces and ipv4 addressing. Start displays a complete walkthrough. Run lab shell in the Academy terminal to perform the commands.",
+        "goal": "Use ip -a addr show, ip addr show, and ip route show. Save ip -a addr show output to ~/lab/ip-addresses/addresses.txt; save primary Docker interface name to interface.txt and its IPv4 CIDR to ipv4.txt. ip -a alone is incomplete syntax.",
+        "tools": "ip",
+        "time": "15 min",
+        "level": "1",
+        "estimated_minutes": 15,
+        "topics": [
+          "Network interfaces",
+          "IPv4 addressing",
+          "Routes"
+        ]
+      },
+      {
+        "id": "sockets",
+        "title": "Inspect real listening sockets",
+        "brief": "Guided practice: inspect real listening sockets. Start displays a complete walkthrough. Run lab shell in the Academy terminal to perform the commands.",
+        "goal": "Inspect local sudo ss -tulnp, then remote listeners with ssh remote-lab \"sudo ss -tulnp\". Save remote output to ~/lab/sockets/listening.txt and its SSH TCP port to ssh-port.txt. netstat -tulnp is an alternative inspection tool.",
+        "tools": "ss, netstat, ssh",
+        "time": "15 min",
+        "level": "2",
+        "estimated_minutes": 15,
+        "topics": [
+          "Listening sockets",
+          "Service ports",
+          "SSH"
+        ]
+      },
+      {
+        "id": "ssh-key",
+        "title": "Generate and enroll an ED25519 identity",
+        "brief": "Guided practice: generate and enroll an ed25519 identity. Start displays a complete walkthrough. Run lab shell in the Academy terminal to perform the commands.",
+        "goal": "Generate ~/.ssh/id_ed25519 with ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -C \"student@linuxlab\". Use an empty passphrase for this local lab. Enroll with lab enroll-key. Verify the connection.",
+        "tools": "ssh-keygen, ssh, lab enroll-key",
+        "time": "20 min",
+        "level": "2",
+        "estimated_minutes": 20,
+        "topics": [
+          "ED25519 keys",
+          "SSH enrollment",
+          "Public-key authentication"
+        ]
+      },
+      {
+        "id": "ssh-login",
+        "title": "Make an authenticated remote connection",
+        "brief": "Guided practice: make an authenticated remote connection. Start displays a complete walkthrough. Run lab shell in the Academy terminal to perform the commands.",
+        "goal": "Connect using ssh remote-lab hostname; save that command's output to /home/student/lab/ssh-login/hostname.txt.",
+        "tools": "ssh",
+        "time": "10 min",
+        "level": "1",
+        "estimated_minutes": 10,
+        "topics": [
+          "SSH configuration",
+          "Host aliases",
+          "Remote login"
+        ]
+      },
+      {
+        "id": "scp",
+        "title": "Transfer a real file securely",
+        "brief": "Guided practice: transfer a real file securely. Start displays a complete walkthrough. Run lab shell in the Academy terminal to perform the commands.",
+        "goal": "Copy /home/student/lab/scp/transfer.txt to remote-lab:/home/student/inbox/transfer.txt using scp. Preserve its content.",
+        "tools": "scp, ssh",
+        "time": "10 min",
+        "level": "1",
+        "estimated_minutes": 10,
+        "topics": [
+          "SCP",
+          "Remote paths",
+          "Secure file transfer"
+        ]
+      },
+      {
+        "id": "journal",
+        "title": "Read journals and recover a flag",
+        "brief": "Guided practice: read journals and recover a flag. Start displays a complete walkthrough. Run lab shell in the Academy terminal to perform the commands.",
+        "goal": "Read ~/lab/journal/training.journal using journalctl --file. Navigate its pager; filter warehouse.service and warning-or-higher priorities. Save filtered messages to warnings.txt and only the FLAG{...} token to flag.txt in that section.",
+        "tools": "journalctl, grep",
+        "time": "20 min",
+        "level": "2",
+        "estimated_minutes": 20,
+        "topics": [
+          "systemd journal",
+          "Log filtering",
+          "Evidence review"
+        ]
+      },
+      {
+        "id": "tcpdump",
+        "title": "Capture and decode SSH traffic",
+        "brief": "Guided practice: capture and decode ssh traffic. Start displays a complete walkthrough. Run lab shell in the Academy terminal to perform the commands.",
+        "goal": "Capture at least three real SSH packets to remote into ~/lab/tcpdump/ssh.pcap, including a SYN. Decode with tcpdump -nn -r and save exactly that output to decoded.txt. Do not capture host interfaces.",
+        "tools": "tcpdump, ssh",
+        "time": "20 min",
+        "level": "2",
+        "estimated_minutes": 20,
+        "topics": [
+          "Packet capture",
+          "SSH traffic",
+          "tcpdump filters"
+        ]
+      },
+      {
+        "id": "iptables",
+        "title": "Read firewall rule intent",
+        "brief": "Guided practice: read firewall rule intent. Start displays a complete walkthrough. Run lab shell in the Academy terminal to perform the commands.",
+        "goal": "Read sudo iptables -L LAB_READ -n -v --line-numbers and sudo iptables -S LAB_READ. Save the -S output to ~/lab/iptables/rules.txt, accepted TCP port to allowed-port.txt, dropped TCP port to blocked-port.txt. Do not change rules.",
+        "tools": "iptables",
+        "time": "15 min",
+        "level": "2",
+        "estimated_minutes": 15,
+        "topics": [
+          "iptables",
+          "Firewall chains",
+          "Rule interpretation"
+        ]
+      },
+      {
+        "id": "inject-posix",
+        "title": "Diagnose locked POSIX access",
+        "brief": "Guided practice: diagnose locked posix access. Start displays a complete walkthrough. Run lab shell in the Academy terminal to perform the commands.",
+        "goal": "Diagnose locked /home/student/lab/inject-posix/vault/critical.txt. Set vault to student:analysts 750 and critical.txt to student:analysts 640. Preserve contents.",
+        "tools": "ls, stat, namei, chmod, chown",
+        "time": "20 min",
+        "level": "2",
+        "estimated_minutes": 20,
+        "topics": [
+          "POSIX permissions",
+          "Path traversal",
+          "Effective access"
+        ]
+      },
+      {
+        "id": "inject-ssh-security",
+        "title": "Diagnose an SSH identity fault",
+        "brief": "Guided practice: diagnose an ssh identity fault. Start displays a complete walkthrough. Run lab shell in the Academy terminal to perform the commands.",
+        "goal": "Remote is reachable but authentication fails. Diagnose the SSH configuration and repair only IdentityFile to ~/.ssh/id_ed25519. Keep IdentitiesOnly yes.",
+        "tools": "ssh, stat, nano",
+        "time": "20 min",
+        "level": "2",
+        "estimated_minutes": 20,
+        "topics": [
+          "SSH key permissions",
+          "Identity troubleshooting",
+          "Authentication"
+        ]
+      },
+      {
+        "id": "inject-resolution",
+        "title": "Diagnose an SSH alias resolution fault",
+        "brief": "Guided practice: diagnose an ssh alias resolution fault. Start displays a complete walkthrough. Run lab shell in the Academy terminal to perform the commands.",
+        "goal": "Diagnose the broken remote-lab alias. Change only HostName to remote. Verify with ssh remote-lab hostname.",
+        "tools": "ssh, getent, nano",
+        "time": "15 min",
+        "level": "2",
+        "estimated_minutes": 15,
+        "topics": [
+          "Name resolution",
+          "/etc/hosts",
+          "getent"
+        ]
+      },
+      {
+        "id": "capstone",
+        "title": "Capstone \u2014 Warehouse handover (unguided)",
+        "brief": "Independent assessment after all guided lessons. No hints or solution. Start displays the requirements; check validates every required outcome.",
+        "goal": "Meet all twenty requirements printed by lab start capstone in your private trainee/remote environment. Every actual-state check must pass. Earlier lessons may be reviewed, but starting them resets shared assessment state.",
+        "tools": "Linux CLI, SSH/SCP, APT, journalctl, tcpdump, iptables",
+        "time": "120 min",
+        "level": "3",
+        "estimated_minutes": 120,
+        "topics": [
+          "Linux operations",
+          "SSH and SCP",
+          "APT",
+          "Logging",
+          "Packet capture",
+          "Firewall troubleshooting"
+        ]
+      }
+    ]
   }
 ]

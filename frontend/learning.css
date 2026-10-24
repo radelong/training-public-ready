@@ -7,8 +7,8 @@
 .course-layout{display:grid;grid-template-columns:230px minmax(0,1fr);gap:16px;align-items:start}
 .module-nav{display:flex;flex-direction:column;gap:8px;padding:18px}.module-nav button{text-align:left;white-space:normal;line-height:1.5}
 .module-nav button.selected{background:#e4f3f5;border-color:#00869b}.module-nav small{display:block;color:#586d80}
-.slide-frame{display:block;width:100%;height:clamp(760px,calc(100vh - 170px),1100px);border:1px solid #cbd7df;background:#e9eff3;border-radius:8px;margin:16px 0}
 .class-lesson{min-width:0;padding:20px}.module-description{white-space:pre-wrap}.exam-question{margin:20px 0;padding:24px}
+.exam-question h3,.editor-item h3{white-space:pre-wrap;overflow-wrap:anywhere}
 .exam-choice{display:flex;gap:12px;align-items:flex-start;padding:12px;border:1px solid #d5e0e7;border-radius:7px;margin:9px 0;cursor:pointer}
 .exam-choice input{width:auto;flex:none;margin:3px 0}.exam-question textarea{width:100%;min-height:150px}
 .editor-item{border:1px solid #d5e0e7;border-left:4px solid #00869b;border-radius:8px;padding:22px;margin:18px 0}
@@ -21,5 +21,5 @@
 .review-answer{white-space:pre-wrap;background:#f2f6f8;padding:18px;border-radius:7px}.grade-list{display:grid;gap:20px}
 .exam-summary{border-left:4px solid #00869b;background:#eaf4f6;padding:24px;margin:20px 0}.score-value{font-size:34px;font-weight:700;display:block}
 .learning-tabs{display:flex;gap:12px;flex-wrap:wrap;margin:20px 0}.learning-form{max-width:1100px}.learning-status{min-height:22px}
-@media(max-width:950px){.course-layout,.editor-columns{grid-template-columns:1fr}.slide-frame{height:clamp(620px,78vh,900px)}.module-nav{max-height:280px;overflow:auto}}
-@media(max-width:520px){.slide-frame{height:70vh;min-height:520px}.class-lesson{padding:16px}}
+@media(max-width:950px){.course-layout,.editor-columns{grid-template-columns:1fr}.module-nav{max-height:280px;overflow:auto}}
+@media(max-width:520px){.class-lesson{padding:16px}}

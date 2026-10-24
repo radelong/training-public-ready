@@ -278,6 +278,49 @@ class ExamAttempt(Base):
     submitted: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
+class AcademyAssessmentAttempt(Base):
+    __tablename__ = "academy_assessment_attempts"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    kind: Mapped[str] = mapped_column(String(24))
+    status: Mapped[str] = mapped_column(String(24), default="in_progress")
+    question_snapshot_json: Mapped[str] = mapped_column(Text)
+    question_order_json: Mapped[str] = mapped_column(Text)
+    answers_json: Mapped[str] = mapped_column(Text, default="{}")
+    marks_json: Mapped[str] = mapped_column(Text, default="{}")
+    area_scores_json: Mapped[str] = mapped_column(Text, default="{}")
+    recommendations_json: Mapped[str] = mapped_column(Text, default="[]")
+    score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    passed: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    created: Mapped[float] = mapped_column(Float, default=time.time)
+    submitted: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
+class ExamReset(Base):
+    __tablename__ = "exam_resets"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    scope: Mapped[str] = mapped_column(String(180))
+    created: Mapped[float] = mapped_column(Float, default=time.time)
+    consumed: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class AcademyAssessmentQuestion(Base):
+    __tablename__ = "academy_assessment_questions"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(24), index=True)
+    area: Mapped[str] = mapped_column(String(120), index=True)
+    prompt: Mapped[str] = mapped_column(Text)
+    choices_json: Mapped[str] = mapped_column(Text)
+    correct: Mapped[int] = mapped_column(Integer)
+    points: Mapped[int] = mapped_column(Integer, default=1)
+    explanation: Mapped[str] = mapped_column(Text, default="")
+    choice_explanations_json: Mapped[str] = mapped_column(Text, default="[]")
+    course_categories_json: Mapped[str] = mapped_column(Text, default="[]")
+    lab_kinds_json: Mapped[str] = mapped_column(Text, default="[]")
+    topics_json: Mapped[str] = mapped_column(Text, default="[]")
+
+
 def database(url):
     kwargs = {"connect_args": {"check_same_thread": False}} if url.startswith("sqlite") else {}
     engine = create_engine(url, pool_pre_ping=True, **kwargs)

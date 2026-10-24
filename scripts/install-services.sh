@@ -11,18 +11,21 @@ python3 "$media/scripts/validate-site.py" "$config"
 bash "$media/scripts/offline-apt.sh" "$media" docker.io docker-compose-v2 openssl ca-certificates python3 qemu-guest-agent cifs-utils
 systemctl start qemu-guest-agent
 systemctl enable --now docker
-install -d -m 750 /opt/training-academy
-install -d -o 10001 -g 10001 -m 750 /opt/training-academy/content
-if [ -e /opt/training-academy/.env ]; then
+install -d -m 750 /opt/uscc-academy
+install -d -o 10001 -g 10001 -m 750 /opt/uscc-academy/content
+if [ ! -e /opt/training-academy ]; then
+  ln -s /opt/uscc-academy /opt/training-academy
+fi
+if [ -e /opt/uscc-academy/.env ]; then
   echo 'Existing installation detected; use the documented upgrade procedure.' >&2; exit 1
 fi
-cp "$media/deploy/compose.yaml" "$media/deploy/nginx.conf" /opt/training-academy/
-cp -a "$media/backend/academy" "$media/frontend" /opt/training-academy/
-install -m 644 "$media/catalogue.json" /opt/training-academy/catalogue.json
-cp "$config" /opt/training-academy/site.json
-python3 "$media/scripts/configure-services.py" "$config" /opt/training-academy
+cp "$media/deploy/compose.yaml" "$media/deploy/nginx.conf" /opt/uscc-academy/
+cp -a "$media/backend/academy" "$media/frontend" /opt/uscc-academy/
+install -m 644 "$media/catalogue.json" /opt/uscc-academy/catalogue.json
+cp "$config" /opt/uscc-academy/site.json
+python3 "$media/scripts/configure-services.py" "$config" /opt/uscc-academy
 docker load -i "$media/assets/images/services.tar"
-cd /opt/training-academy
+cd /opt/uscc-academy
 docker compose config --quiet
 docker compose up -d --pull never --wait --wait-timeout 600
 docker compose exec -T api python - <<'PY'
@@ -37,6 +40,6 @@ for attempt in range(60):
 else:
     raise SystemExit('Console service did not become ready; inspect Guacamole logs')
 PY
-install -m 755 "$media/scripts/backup.sh" /opt/training-academy/backup.sh
+install -m 755 "$media/scripts/backup.sh" /opt/uscc-academy/backup.sh
 printf '\nAcademy installed. The administrator password is stored in /opt/training-academy/secrets/initial-admin.txt\n'
 printf 'Import the local CA certificate on learner workstations, then use the configured HTTPS address.\n'
