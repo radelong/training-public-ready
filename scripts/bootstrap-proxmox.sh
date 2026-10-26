@@ -70,6 +70,11 @@ pveum acl modify /pool/academy-learners --users academy@pve --roles AcademyVM
 for vmid in "$SITE_NET_TEMPLATE_ID" "$SITE_LINUX_TEMPLATE_ID"; do
   pveum acl modify "/vms/$vmid" --users academy@pve --roles AcademyTemplate
 done
+if [ "${ACADEMY_CURRENT_TEMPLATES:-0}" = 1 ]; then
+  for vmid in 9251 9252; do
+    pveum acl modify "/vms/$vmid" --users academy@pve --roles AcademyTemplate
+  done
+fi
 pveum acl modify "/storage/$SITE_PVE_STORAGE" --users academy@pve --roles AcademyStorage
 pveum acl modify "/sdn/zones/localnetwork/$SITE_PVE_LAB_BRIDGE" --users academy@pve --roles AcademyBridge
 pveum user token add academy@pve portal --privsep 0 --output-format json > "$work/token.json"
@@ -134,6 +139,7 @@ wait_bootstrap() {
   done
   echo "VM $vmid bootstrap did not complete. Inspect its console and /var/log/cloud-init-output.log." >&2; exit 1
 }
+if [ "${ACADEMY_CURRENT_TEMPLATES:-0}" != 1 ]; then
 for specification in "$SITE_NET_TEMPLATE_ID:netlab" "$SITE_LINUX_TEMPLATE_ID:linux"; do
   vmid="${specification%%:*}"; kind="${specification#*:}"
   memory=2048; [ "$kind" != netlab ] || memory=4096
@@ -144,6 +150,7 @@ for specification in "$SITE_NET_TEMPLATE_ID:netlab" "$SITE_LINUX_TEMPLATE_ID:lin
   qm set "$vmid" --delete cicustom,ide0 --sshkeys /dev/null
   qm template "$vmid"
 done
+fi
 create_vm "$SITE_SERVICES_VMID" services "$SITE_SERVICES_MEMORY_MB" "$SITE_SERVICES_CORES" "$SITE_SERVICES_DISK_GB"
 wait_bootstrap "$SITE_SERVICES_VMID"
 # Templates are activated in the portal after the acceptance test; they are not enabled silently.

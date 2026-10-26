@@ -3,22 +3,35 @@ set -Eeuo pipefail
 
 media_dir="$(realpath "${1:?Usage: install-on-proxmox.sh MEDIA_DIRECTORY INSTALLER_DIRECTORY}")"
 installer_dir="$(realpath "${2:?Usage: install-on-proxmox.sh MEDIA_DIRECTORY INSTALLER_DIRECTORY}")"
+package_dir="$(dirname "$installer_dir")"
+content_dir="$package_dir/28_Fresh_Install_Content"
+templates_dir="$package_dir/29_Current_Lab_Templates"
 archive="$media_dir/training-academy-offline-amd64.tar.gz"
 provision_iso="$media_dir/academy-provision.iso"
 
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 [[ "$(id -u)" = 0 ]] || die 'Sign in to Proxmox as root.'
 command -v qm >/dev/null || die 'This is not a Proxmox node.'
+command -v pct >/dev/null || die 'Proxmox container tools are missing.'
 command -v python3 >/dev/null || die 'Python 3 is required on the Proxmox node.'
 pveversion | grep -Eq 'pve-manager/(9|[1-9][0-9])\.' || die 'This installer requires Proxmox VE 9 or newer.'
 [[ -f "$archive" && -f "$archive.sha256" ]] || die 'Offline Academy archive or checksum is missing.'
 [[ -f "$provision_iso" && -f "$provision_iso.sha256" ]] || die 'Academy provisioning ISO or checksum is missing.'
+[[ -f "$content_dir/CONTENT-SHA256SUMS.txt" ]] || die 'Protected class and assessment content is missing.'
+[[ -f "$templates_dir/backups/academy-template-sha256sums.txt" ]] || die 'Lab template backups are missing.'
+[[ -f "$templates_dir/fresh-labs.json" ]] || die 'Fresh lab catalog is missing.'
+[[ -f "$installer_dir/import-on-services.sh" ]] || die 'Services import script is missing.'
 
 (cd "$media_dir" && sha256sum --check training-academy-offline-amd64.tar.gz.sha256 academy-provision.iso.sha256) || die 'Media checksum verification failed.'
+(cd "$content_dir" && sha256sum --check CONTENT-SHA256SUMS.txt) || die 'Protected content checksum verification failed.'
+(cd "$templates_dir/backups" && sha256sum --check academy-template-sha256sums.txt) || die 'Lab template checksum verification failed.'
 test -c /dev/kvm && grep -Eq '(vmx|svm)' /proc/cpuinfo || die 'Nested KVM CPU features are not available.'
 vm_listing="$(qm list)"
 if grep -Eq '^[[:space:]]*[0-9]+[[:space:]]' <<< "$vm_listing"; then
   die 'This Proxmox node contains VMs. No VMs were changed; use a dedicated empty node.'
+fi
+if grep -Eq '^[[:space:]]*[0-9]+[[:space:]]' <<< "$(pct list)"; then
+  die 'This Proxmox node contains containers. No guests were changed; use a dedicated empty node.'
 fi
 [[ ! -e /root/academy-bootstrap ]] || die 'Bootstrap state already exists. Follow the recovery guide; do not retry blindly.'
 
@@ -33,10 +46,43 @@ tar -xzf "$archive" -C "$media_root"
 python3 "$media_root/scripts/verify-media.py" "$media_root" || die 'Extracted offline media failed verification.'
 python3 "$installer_dir/configure-site.py" "$media_root/deploy/site.example.json" "$media_root/scripts/validate-site.py" /root/gdp-site.json || die 'Site configuration was not accepted.'
 
-printf '\nThis will create private bridges, a restricted Proxmox service account, two lab templates, and Academy services VM.\n'
+printf '\nThis will create private bridges, a restricted Proxmox service account, the Academy services VM, and restore four lab templates.\n'
 printf 'The services VM runs both the website frontend and application backend.\n'
+printf 'It will import eight classes, two 80-question assessments, Packet Loss, and three labs with fresh users and results.\n'
 printf 'No existing VM or disk image will be modified.\n\n'
-read -r -p 'Type INSTALL to begin the one-time bootstrap: ' confirmation
-[[ "$confirmation" = INSTALL ]] || die 'Installation cancelled. Verified files remain in /root/gdp-install and /root/academy-media.'
 
-bash "$media_root/scripts/bootstrap-proxmox.sh" "$media_root" /root/gdp-site.json "$provision_iso"
+ACADEMY_CURRENT_TEMPLATES=1 bash "$media_root/scripts/bootstrap-proxmox.sh" "$media_root" /root/gdp-site.json "$provision_iso"
+bash "$templates_dir/restore-templates.sh" "$templates_dir/backups" /root/academy-bootstrap/site.json
+eval "$(python3 "$media_root/scripts/validate-site.py" /root/academy-bootstrap/site.json --shell)"
+guest_ip="${SITE_SERVICES_MANAGEMENT_IP%/*}"
+guest_key="$(qm guest exec "$SITE_SERVICES_VMID" -- /bin/cat /etc/ssh/ssh_host_ed25519_key.pub | python3 -c '
+import json, sys
+result = json.load(sys.stdin)
+assert result.get("exited") and result.get("exitcode") == 0 and not result.get("out-truncated")
+value = result.get("out-data", "").strip()
+assert value.startswith("ssh-ed25519 ")
+print(value)
+')" || die 'Could not pin the new services VM SSH host key through the guest agent.'
+known_hosts=/root/academy-bootstrap/known_hosts
+printf '%s %s\n' "$guest_ip" "$guest_key" > "$known_hosts"
+chmod 600 "$known_hosts"
+ssh_options=(-o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=10
+  -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$known_hosts"
+  -i /root/academy-bootstrap/bootstrap-key)
+for attempt in {1..12}; do
+  if ssh "${ssh_options[@]}" "learner@$guest_ip" true; then break; fi
+  (( attempt < 12 )) || die 'Services VM SSH did not become ready. Bootstrap remains for inspection.'
+  sleep 5
+done
+ssh "${ssh_options[@]}" "learner@$guest_ip" 'mkdir -m 700 /tmp/academy-fresh-import'
+scp "${ssh_options[@]}" -r -p "$content_dir" \
+  "$templates_dir/fresh-labs.json" \
+  "$installer_dir/import-classes.py" \
+  "$installer_dir/import-fresh-extras.py" \
+  "$installer_dir/import-fresh-labs.py" \
+  "$installer_dir/import-on-services.sh" \
+  "learner@$guest_ip:/tmp/academy-fresh-import/"
+ssh "${ssh_options[@]}" "learner@$guest_ip" \
+  'sudo bash /tmp/academy-fresh-import/import-on-services.sh /tmp/academy-fresh-import'
+printf '\nFresh Academy install complete. Retrieve the initial administrator password from the services VM console.\n'
+printf 'Accept the local CA on approved LAN devices, test all three labs, then enable learner access.\n'

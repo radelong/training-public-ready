@@ -8,3 +8,6 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
+echo.
+echo Installation finished. Read the acceptance steps in START_HERE_GDP_FRESH_INSTALL.md.
+pause

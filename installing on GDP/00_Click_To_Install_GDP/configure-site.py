@@ -62,6 +62,8 @@ def main() -> int:
     config["management_dns"] = ask("LAN DNS resolver IPv4 address", detected["dns"] or lan_gateway)
     config["pve_storage"] = ask("Active Proxmox VM disk storage ID", "local-lvm")
     config["pve_iso_storage"] = ask("Active Proxmox ISO/snippet directory storage ID", "local")
+    config["net_template_id"] = 9008
+    config["linux_template_id"] = 9105
     config["services_network_mode"] = "private_nat"
     config["pve_services_bridge"] = ask("New private services bridge name", "vmbr2")
     services_prefix = ask("Private services subnet prefix (must not overlap LAN)", "10.10.0")
@@ -69,7 +71,9 @@ def main() -> int:
     config["management_gateway"] = ask("Proxmox private bridge address/prefix", f"{services_prefix}.1/24").split("/")[0]
     config["academy_public_ip"] = config["pve_management_ip"]
     config["pve_lab_bridge"] = ask("Isolated learner bridge name", "vmbr1")
-    lab_prefix = ask("Learner network first three IPv4 octets (must not overlap LAN)", "10.44.0")
+    # The sealed lab images use this isolated subnet. Changing it needs a new image build.
+    lab_prefix = "10.44.0"
+    print("Learner network: 10.44.0.0/24 (required by the included lab images)")
     config["lab_prefix"] = lab_prefix
     config["services_lab_ip"] = f"{lab_prefix}.10/24"
     config["capacity"] = int(ask("Maximum concurrent learner VMs (start at 2)", "2"))
