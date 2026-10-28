@@ -83,6 +83,8 @@ scp "${ssh_options[@]}" "$update_dir/$update_name" "$update_dir/$update_name.sha
   "learner@$guest_ip:/tmp/academy-fresh-import/"
 ssh "${ssh_options[@]}" "learner@$guest_ip" \
   "cd /tmp/academy-fresh-import && sha256sum --check '$update_name.sha256' && mkdir app-update && tar -xzf '$update_name' -C app-update && sudo bash app-update/academy-update/scripts/install-app-update.sh /tmp/academy-fresh-import/app-update/academy-update"
+scp "${ssh_options[@]}" "$package_dir/37_Docker_Class_Filter/install-filter.py" "learner@$guest_ip:/tmp/academy-fresh-import/"
+ssh "${ssh_options[@]}" "learner@$guest_ip" 'sudo python3 /tmp/academy-fresh-import/install-filter.py'
 scp "${ssh_options[@]}" -r -p "$content_dir" \
   "$templates_dir/fresh-labs.json" \
   "$installer_dir/import-classes.py" \

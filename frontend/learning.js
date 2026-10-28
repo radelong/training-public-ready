@@ -22,8 +22,9 @@ async function learningPage(name){
 }
 async function renderClasses(){
   const classes=await api('/courses');
-  const types=[...new Set(classes.map(c=>c.category||'Other'))].sort();
-  const visible=classes.filter(c=>!classTypeFilter.size||classTypeFilter.has(c.category||'Other'));
+  const filterTypes=c=>[c.category||'Other',...(/^Docker\b/i.test(c.title||'')?['Docker']:[])];
+  const types=[...new Set(classes.flatMap(filterTypes))].sort();
+  const visible=classes.filter(c=>!classTypeFilter.size||filterTypes(c).some(type=>classTypeFilter.has(type)));
   const filters=types.length>1?'<fieldset class="catalog-filters"><legend>Filter classes by type</legend>'+
     types.map(type=>`<label><input type="checkbox" data-class-type="${esc(type)}" ${classTypeFilter.has(type)?'checked':''}> ${esc(type)}</label>`).join('')+
     '<p class="small muted">Select no types to show all classes.</p></fieldset>':'';
