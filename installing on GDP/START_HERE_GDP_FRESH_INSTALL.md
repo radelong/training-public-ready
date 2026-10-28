@@ -1,6 +1,6 @@
 # Install the Training Academy on a new GDP server
 
-This package installs the current Academy on a **dedicated, empty Proxmox VE 9 node**. It includes the website and backend, eight classes, two 80-question assessments, six learning games, and Netlab, Linux Lab and Callback Lab. It starts with one new administrator and no learner accounts, results, attempts or bug reports. It does not copy videos or configure Cloudflare. The older numbered update folders are recovery references; do not run them over this consolidated installation.
+This package is a candidate for installing the current Academy on a **dedicated, empty Proxmox VE 9 node**. It includes the website and backend, eleven classes, two 80-question assessments, six learning games, and Netlab, Linux Lab and Callback Lab. It starts with one new administrator and no learner accounts, results, attempts or bug reports. It does not copy videos or configure Cloudflare. The candidate has not yet passed an empty-node installation and acceptance test. The older numbered update folders are recovery references; do not run them over this consolidated installation.
 
 **Release gate:** the installer has not passed a complete empty-node acceptance run yet. Keep this package in testing until the acceptance record is added. Never point it at the current production Proxmox node.
 
@@ -42,7 +42,7 @@ The frontend, API, database and embedded terminal service run together in the se
 
 ## 4. Accept the new installation
 
-Before giving learners access, confirm all eight classes open their slides and score module quizzes and finals; Academy Overall and Graduation each draw from 80 questions; the six games open and save progress where supported; Netlab lists 28 exercises, Linux Lab 23, and Callback Lab 10. Launch each lab, verify the embedded terminal (both Sender and Listener for Callback), complete one guided exercise, then end it and confirm its VM is cleaned up. Use two test learners to check session isolation. Confirm My Results starts empty for a new learner and the Video Library has no media files. Restart the services VM once and recheck site health and content.
+Before giving learners access, confirm all eleven classes open their slides and score module quizzes and finals; Academy Overall and Graduation each draw from 80 questions; the six games open and save progress where supported; Netlab lists 28 exercises, Linux Lab 23, and Callback Lab 10. Launch each lab, verify the embedded terminal (both Sender and Listener for Callback), complete one guided exercise, then end it and confirm its VM is cleaned up. Use two test learners to check session isolation. Confirm My Results starts empty for a new learner and the Video Library has no media files. Restart the services VM once and recheck site health and content.
 
 On the Proxmox root shell, keep a backup after acceptance:
 

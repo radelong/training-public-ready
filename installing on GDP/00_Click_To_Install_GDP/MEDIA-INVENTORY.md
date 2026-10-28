@@ -11,7 +11,7 @@ The package contains the operating-system media needed for a fresh dedicated Pro
 | Ubuntu Server 26.04 cloud disk image (`.img`, not ISO) | Inside `30_Current_Offline_Media_2026-10-26/training-academy-offline-amd64.tar.gz` at `assets/ubuntu/ubuntu-26.04-server-cloudimg-amd64.img` | Base disk used by the services VM. |
 | Offline container images and Debian/Python packages | Inside the current offline archive | Runs the website frontend/backend and guest setup without a package download. |
 | Four sealed lab-template backups | `29_Current_Lab_Templates/backups` | Restores Netlab, Linux Lab, and both Callback Lab roles. |
-| Eight classes, assessments, and six learning games | `28_Fresh_Install_Content` | Imports protected teaching content after the new services VM starts. |
+| Eleven classes, assessments, and six learning games | `28_Fresh_Install_Content` | Imports protected teaching content after the new services VM starts. |
 | Academy application update 28, revision 3 | `33_Learning_Fixes_R3` | Applies module checks, assessment review and recommendation, and game-exit changes to the fresh services VM before content import. |
 
 The Proxmox ISO checksum sidecar is included. The one-click launcher verifies the Proxmox ISO, both Academy media sidecars, and the extracted offline media manifest before it asks Proxmox to create anything.

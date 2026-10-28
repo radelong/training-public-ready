@@ -108,8 +108,8 @@ def main():
             users = list(db.scalars(select(User)))
             if len(users) != 1 or users[0].role != "admin" or not users[0].enabled:
                 raise ValueError("This importer runs only on a fresh Academy with its single administrator")
-            if db.scalar(select(func.count(Course.id))) != 8:
-                raise ValueError("Import the eight class courses first")
+            if db.scalar(select(func.count(Course.id))) != 11:
+                raise ValueError("Import the eleven class courses first")
             if db.scalar(select(func.count(AcademyAssessmentQuestion.id))) or db.scalar(
                     select(func.count(LearningGame.id))):
                 raise ValueError("Assessment bank or game already exists; refusing to replace data")
@@ -125,7 +125,7 @@ def main():
                         class_prompts.add(normalized_question_prompt(question["prompt"]))
             if class_prompts.intersection(prompts):
                 raise ValueError("Assessment bank repeats a class question")
-            print("VALIDATED 8 classes, 80 Overall questions, 80 Graduation questions, and 6 games")
+            print("VALIDATED 11 classes, 80 Overall questions, 80 Graduation questions, and 6 games")
             if not args.apply:
                 print("DRY RUN ONLY; nothing changed")
                 return

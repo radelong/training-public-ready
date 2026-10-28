@@ -52,7 +52,7 @@ python3 "$installer_dir/configure-site.py" "$media_root/deploy/site.example.json
 
 printf '\nThis will create private bridges, a restricted Proxmox service account, the Academy services VM, and restore four lab templates.\n'
 printf 'The services VM runs both the website frontend and application backend.\n'
-printf 'It will import eight classes, two 80-question assessments, six games, and three labs with fresh users and results.\n'
+printf 'It will import eleven classes, two 80-question assessments, six games, and three labs with fresh users and results.\n'
 printf 'No existing VM or disk image will be modified.\n\n'
 
 ACADEMY_CURRENT_TEMPLATES=1 bash "$media_root/scripts/bootstrap-proxmox.sh" "$media_root" /root/gdp-site.json "$provision_iso"
