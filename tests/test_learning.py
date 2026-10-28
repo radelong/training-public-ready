@@ -17,7 +17,11 @@ def definition(pdf=None, written=False, require=True, attempts=2):
                           "points": 2, "rubric": "Two points for a justified diagnosis."})
     return {"title": "Routing class", "description": "Local slides and practice.",
             "modules": [{"id": "module1", "title": "Routing", "asset_id": pdf,
-                         "lab_id": None if pdf else "netlab", "required": True}],
+                         "lab_id": None if pdf else "netlab", "required": True,
+                         "quiz": [{"id": "module-check", "type": "multiple_choice",
+                                   "prompt": "Which tool displays listening sockets?",
+                                   "choices": ["ss", "pwd"], "correct": 0, "points": 1,
+                                   "explanation": "The ss command can display listening sockets."}]}],
             "exam": {"passing_score": 75, "max_attempts": attempts, "require_modules": require,
                      "feedback": "after_pass", "questions": questions}}
 
@@ -164,7 +168,10 @@ def test_roles_keys_prerequisites_and_grading(system):
     assert 'rubric' not in lesson.json()['content']['exam']['questions'][0]
     assert learner.post(f'/api/course-versions/{vid}/attempts').status_code == 409
     assert learner.post(f'/api/course-versions/{vid}/enroll').status_code == 200
-    assert learner.put(f'/api/course-versions/{vid}/progress', json={"module_id": "module1", "complete": True}).status_code == 200
+    assert learner.put(f'/api/course-versions/{vid}/progress', json={"module_id": "module1", "complete": True}).status_code == 409
+    quiz = learner.post(f'/api/course-versions/{vid}/modules/module1/quiz-attempts').json()
+    assert learner.post(f"/api/module-quiz-attempts/{quiz['id']}/submit",
+                        json={"answers": {"module-check": 0}}).status_code == 200
     attempt = learner.post(f'/api/course-versions/{vid}/attempts').json()
     aid = attempt['id']
     assert 'correct_answers' not in attempt
@@ -233,6 +240,40 @@ def test_module_quizzes_hide_keys_grade_at_80_and_shuffle_retake(system):
     assert learner.post(f'/api/course-versions/{vid}/attempts').status_code==200
 
 
+def test_module_progress_cannot_skip_an_unfinished_required_module(system):
+    admin = system[1]; learner = user_client(system, 'ordered-module-learner')
+    data = definition()
+    second = copy.deepcopy(data['modules'][0])
+    second.update(id='module2', title='Second module')
+    second['quiz'][0].update(id='module2-check', prompt='Which command lists network interfaces?')
+    data['modules'].append(second)
+    _, vid = publish(admin, data)
+    assert learner.post(f'/api/course-versions/{vid}/enroll').status_code == 200
+    assert learner.put(f'/api/course-versions/{vid}/progress',
+                       json={'module_id': 'module2', 'complete': False}).status_code == 409
+    assert learner.post(f'/api/course-versions/{vid}/modules/module2/quiz-attempts').status_code == 409
+    quiz = learner.post(f'/api/course-versions/{vid}/modules/module1/quiz-attempts').json()
+    assert learner.post(f"/api/module-quiz-attempts/{quiz['id']}/submit",
+                        json={'answers': {'module-check': 0}}).json()['passed'] is True
+    assert learner.put(f'/api/course-versions/{vid}/progress',
+                       json={'module_id': 'module2', 'complete': False}).status_code == 200
+
+
+def test_module_quiz_passes_at_80_percent_and_records_completion(system):
+    admin = system[1]; learner = user_client(system, 'module-boundary-learner')
+    data = definition()
+    question = data['modules'][0]['quiz'][0]
+    data['modules'][0]['quiz'] = [{**question, 'id': f'boundary-{i}',
+                                  'prompt': f'Socket evidence question {i}?'} for i in range(5)]
+    _, vid = publish(admin, data)
+    assert learner.post(f'/api/course-versions/{vid}/enroll').status_code == 200
+    quiz = learner.post(f'/api/course-versions/{vid}/modules/module1/quiz-attempts').json()
+    answers = {f'boundary-{i}': 1 if i == 0 else 0 for i in range(5)}
+    result = learner.post(f"/api/module-quiz-attempts/{quiz['id']}/submit", json={'answers': answers}).json()
+    assert result['score'] == 80 and result['passed'] is True
+    assert learner.get(f'/api/course-versions/{vid}').json()['completed'] == ['module1']
+
+
 def test_class_progress_test_awards_credit_only_for_perfect_module_scores(system):
     admin=system[1]; learner=user_client(system,'progress-test-student')
     data=definition()
@@ -267,7 +308,11 @@ def test_class_progress_test_awards_credit_only_for_perfect_module_scores(system
     assert partial['module_results']['module2']=={"score":87.5,"question_count":8,"perfect":False}
     assert learner.get(f'/api/course-versions/{vid}').json()['completed']==['module1']
     assert learner.post(f'/api/course-versions/{vid}/attempts').status_code==409
-    assert learner.put(f'/api/course-versions/{vid}/progress',json={"module_id":"module2","complete":True}).status_code==200
+    assert learner.put(f'/api/course-versions/{vid}/progress',json={"module_id":"module2","complete":True}).status_code==409
+    quiz=learner.post(f'/api/course-versions/{vid}/modules/module2/quiz-attempts').json()
+    result=learner.post(f"/api/module-quiz-attempts/{quiz['id']}/submit",
+        json={"answers":{f"pt-address-{i}":0 for i in range(8)}})
+    assert result.status_code==200 and result.json()['passed'] is True
     assert learner.post(f'/api/course-versions/{vid}/progress-test-attempts').status_code==409
     assert set(learner.get(f'/api/course-versions/{vid}').json()['completed'])=={'module1','module2'}
     assert learner.post(f'/api/course-versions/{vid}/attempts').status_code==200
@@ -374,6 +419,16 @@ def test_academy_assessments_are_separate_private_and_report_area_growth(system)
     assert failed["area_scores"]["Linux"]["score"]==0
     assert failed["correct_answers"] and failed["recommendations"]
     assert failed["questions"][0]["explanation"]
+    assert admin.get(f"/api/academy-assessments/attempts/{overall['id']}").json()['username'] == 'academy-assessment-learner'
+    assert 'username' not in learner.get(f"/api/academy-assessments/attempts/{overall['id']}").json()
+    game = admin.post('/api/admin/games', content=b'<!doctype html><html><body>Practice</body></html>',
+                      headers={'Content-Type': 'text/html', 'X-Game-Title': 'Linux practice',
+                               'X-Game-Category': 'Linux', 'X-File-Name': 'practice.html'})
+    assert game.status_code == 200, game.text
+    refreshed = learner.get(f"/api/academy-assessments/attempts/{overall['id']}").json()
+    assert any(item['type'] == 'game' and item['id'] == game.json()['id']
+               for item in refreshed['recommendations'])
+    assert refreshed['score'] == failed['score'] and refreshed['area_scores'] == failed['area_scores']
     assert learner.get("/api/academy-assessments").json()["attempts"][0]["area_scores"]["Linux"]["score"]==0
     assert learner.get("/api/admin/academy-assessment-results").status_code==403
     results=admin.get("/api/admin/academy-assessment-results").json()

@@ -15,7 +15,8 @@ from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field, model_validator, ValidationError
 from sqlalchemy import select, func
 from .db import (Course, CourseVersion, ContentAsset, CourseProgress, ModuleQuizAttempt, ProgressTestAttempt, ExamAttempt,
-                 AcademyAssessmentAttempt, AcademyAssessmentQuestion, ExamReset, Lab, User, Audit, allocation_lock, uid)
+                 AcademyAssessmentAttempt, AcademyAssessmentQuestion, ExamReset, Lab, LearningGame, User, Audit,
+                 allocation_lock, uid)
 
 MAX_PDF = 50 * 1024 * 1024
 Identifier = str
@@ -391,7 +392,8 @@ def mount_learning(app, factory, settings, identity, administrator, get_db):
                 key = ("class", course_row.id)
                 if key not in added:
                     recommendations.append({"type": "class", "id": course_row.published_id, "title": content["title"],
-                        "area": area, "reason": "Strengthen this area with the published class and its ordered modules."})
+                        "area": area, "area_score": area_detail["score"],
+                        "reason": "Strengthen this area with the published class and its ordered modules."})
                     added.add(key)
                 for module in content.get("modules", []):
                     lab = db.get(Lab, module.get("lab_id")) if module.get("lab_id") else None
@@ -399,13 +401,24 @@ def mount_learning(app, factory, settings, identity, administrator, get_db):
                         continue
                     if lab.kind in lab_kinds or assessment_area(content, module, lab) == area or assessment_area({"title": lab.title}, {"title": "", "topics": []}, lab) == area:
                         recommendations.append({"type": "lab", "id": lab.id, "title": lab.title, "area": area,
-                            "available": lab.enabled, "reason": "Take this hands-on lab after the related class."})
+                            "area_score": area_detail["score"], "available": lab.enabled,
+                            "reason": "Take this hands-on lab after the related class."})
                         added.add(lab.id)
             for lab in db.scalars(select(Lab)):
                 if (lab.kind in lab_kinds or assessment_area({"title": lab.title}, {"title": "", "topics": []}, lab) == area) and lab.id not in added:
                     recommendations.append({"type": "lab", "id": lab.id, "title": lab.title, "area": area,
-                        "available": lab.enabled, "reason": "Practice this area in the hands-on lab after the recommended class."})
+                        "area_score": area_detail["score"], "available": lab.enabled,
+                        "reason": "Practice this area in the hands-on lab after the recommended class."})
                     added.add(lab.id)
+            for game in db.scalars(select(LearningGame)):
+                game_area = assessment_area({"title": game.title, "category": game.category},
+                                            {"title": game.description, "topics": []})
+                key = ("game", game.id)
+                if game_area == area and key not in added:
+                    recommendations.append({"type": "game", "id": game.id, "title": game.title, "area": area,
+                        "area_score": area_detail["score"],
+                        "reason": "Practice this area with this interactive learning game."})
+                    added.add(key)
         return recommendations
 
     def validate_references(db, content, publishing=False):
@@ -422,6 +435,8 @@ def mount_learning(app, factory, settings, identity, administrator, get_db):
                 raise HTTPException(422, "Activate required linked labs before publishing")
         if publishing and (not content.modules or not content.exam.questions):
             raise HTTPException(422, "Publishing requires at least one module and one final exam question")
+        if publishing and any(not module.quiz for module in content.modules):
+            raise HTTPException(422, "Add at least one module knowledge-check question to every module before publishing")
         if publishing and any(q.type != 'written' and not q.explanation.strip() for q in content.exam.questions):
             raise HTTPException(422, "Add an explanation for every objective question before publishing")
         if publishing and any(not question.get("explanation", "").strip()
@@ -484,7 +499,7 @@ def mount_learning(app, factory, settings, identity, administrator, get_db):
             raise HTTPException(404, "Academy assessment attempt not found")
         return value
 
-    def academy_assessment_view(attempt, reveal=False, include_user=None):
+    def academy_assessment_view(attempt, reveal=False, include_user=None, db=None):
         snapshot = json.loads(attempt.question_snapshot_json)
         order = json.loads(attempt.question_order_json)
         positions = {qid: index for index, qid in enumerate(order)}
@@ -504,6 +519,9 @@ def mount_learning(app, factory, settings, identity, administrator, get_db):
             "submitted": attempt.submitted, "answers": answers, "questions": questions,
             "area_scores": json.loads(attempt.area_scores_json),
             "recommendations": json.loads(attempt.recommendations_json) if reveal else []}
+        if reveal and db is not None and attempt.kind == "overall" and result["area_scores"]:
+            # Use the current published catalog for both new and earlier results.
+            result["recommendations"] = assessment_recommendations(db, result["area_scores"])
         if reveal:
             result["marks"] = json.loads(attempt.marks_json)
             result["correct_answers"] = {item["id"]: item["correct"] for item in snapshot}
@@ -748,9 +766,13 @@ def mount_learning(app, factory, settings, identity, administrator, get_db):
             raise HTTPException(422, "Module not found")
         content = content_of(v)
         completed = set(json.loads(p.completed_json))
-        if body.complete and not content.get("progress_test_enabled") and module.get("quiz") and not db.scalars(select(ModuleQuizAttempt).where(
-                ModuleQuizAttempt.version_id == vid, ModuleQuizAttempt.module_id == body.module_id,
-                ModuleQuizAttempt.user_id == auth[0].id, ModuleQuizAttempt.passed.is_(True))).first():
+        if not earlier_required_modules_complete(content, completed, body.module_id):
+            raise HTTPException(409, "Complete earlier required modules before advancing")
+        passed_quiz = any(item.passed and reset_is_current(db, item, f"quiz:{vid}:{body.module_id}")
+                          for item in db.scalars(select(ModuleQuizAttempt).where(
+                              ModuleQuizAttempt.version_id == vid, ModuleQuizAttempt.module_id == body.module_id,
+                              ModuleQuizAttempt.user_id == auth[0].id)))
+        if body.complete and module.get("quiz") and body.module_id not in completed and not passed_quiz:
             raise HTTPException(409, "Pass this module's quiz before marking it complete")
         if body.complete: completed.add(body.module_id)
         p.completed_json, p.current_module = json.dumps(sorted(completed)), body.module_id
@@ -809,11 +831,22 @@ def mount_learning(app, factory, settings, identity, administrator, get_db):
             raise HTTPException(404, "Module quiz not found")
         return module["quiz"]
 
+    def earlier_required_modules_complete(content, completed, module_id):
+        modules = content["modules"]
+        index = next((i for i, item in enumerate(modules) if item["id"] == module_id), None)
+        return index is not None and all(not item["required"] or item["id"] in completed
+                                         for item in modules[:index])
+
     @app.post("/api/course-versions/{vid}/modules/{module_id}/quiz-attempts")
     def begin_module_quiz(vid: str, module_id: str, auth=Depends(identity), db=Depends(get_db)):
         allocation_lock(db)
-        if not progress(db, vid, auth[0]):
+        enrollment = progress(db, vid, auth[0])
+        if not enrollment:
             raise HTTPException(409, "Open the class before starting a module quiz")
+        content = content_of(version(db, vid, auth[0]))
+        completed = set(json.loads(enrollment.completed_json))
+        if not earlier_required_modules_complete(content, completed, module_id):
+            raise HTTPException(409, "Complete earlier required modules before taking this quiz")
         questions = module_quiz_questions(db, vid, module_id, auth[0])
         existing = [item for item in db.scalars(select(ModuleQuizAttempt).where(
             ModuleQuizAttempt.version_id == vid, ModuleQuizAttempt.module_id == module_id,
@@ -857,6 +890,12 @@ def mount_learning(app, factory, settings, identity, administrator, get_db):
             attempt.passed = attempt.score >= 80
             attempt.status, attempt.submitted = "graded", time.time()
             audit(db, auth[0], "submit_module_quiz", attempt.id)
+            if attempt.passed:
+                enrollment = progress(db, attempt.version_id, auth[0])
+                completed = set(json.loads(enrollment.completed_json))
+                completed.add(attempt.module_id)
+                enrollment.completed_json = json.dumps(sorted(completed))
+                enrollment.current_module = attempt.module_id
         db.commit()
         return module_quiz_view(db, attempt, auth[0])
 
@@ -1087,7 +1126,7 @@ def mount_learning(app, factory, settings, identity, administrator, get_db):
             attempt.status, attempt.submitted = "graded", time.time()
             audit(db, auth[0], "submit_academy_assessment", f"{attempt.kind}:{attempt.id}")
         db.commit()
-        return academy_assessment_view(attempt, reveal=submit or attempt.status == "graded")
+        return academy_assessment_view(attempt, reveal=submit or attempt.status == "graded", db=db)
 
     @app.get("/api/academy-assessments/attempts/{aid}")
     def read_academy_assessment(aid: str, auth=Depends(identity), db=Depends(get_db)):
@@ -1095,7 +1134,9 @@ def mount_learning(app, factory, settings, identity, administrator, get_db):
         if item.status == "in_progress" and not reset_is_current(db, item,
                 f"assessment:{item.kind}"):
             raise HTTPException(409, "This attempt was closed by an administrator reset")
-        return academy_assessment_view(item, reveal=item.status == "graded")
+        owner = db.get(User, item.user_id) if auth[0].role == "admin" and item.user_id != auth[0].id else None
+        return academy_assessment_view(item, reveal=item.status == "graded",
+                                       include_user=owner.username if owner else None, db=db)
 
     @app.put("/api/academy-assessments/attempts/{aid}")
     def save_academy_assessment(aid: str, body: AnswerWrite, auth=Depends(identity), db=Depends(get_db)):

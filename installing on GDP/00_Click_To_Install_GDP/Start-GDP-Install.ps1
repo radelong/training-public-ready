@@ -4,6 +4,7 @@ $packageRoot = Split-Path -Parent $installerRoot
 $mediaRoot = Join-Path $packageRoot '30_Current_Offline_Media_2026-10-26'
 $contentRoot = Join-Path $packageRoot '28_Fresh_Install_Content'
 $templatesRoot = Join-Path $packageRoot '29_Current_Lab_Templates'
+$updateRoot = Join-Path $packageRoot '33_Learning_Fixes_R3'
 $remoteFolder = '/root/gdp-install'
 $remote = $null
 
@@ -12,6 +13,7 @@ try {
     $provisionIso = Join-Path $mediaRoot 'academy-provision.iso'
     $pveIso = Join-Path $packageRoot '00_Proxmox_Installer\proxmox-ve_9.2-1.iso'
     foreach ($path in @($archive, $provisionIso, $pveIso,
+                         (Join-Path $updateRoot 'Training_Academy_App_Update_28_Learning_Fixes_2026-10-27_r3.tar.gz'),
                          (Join-Path $contentRoot 'CONTENT-SHA256SUMS.txt'),
                          (Join-Path $templatesRoot 'fresh-labs.json'),
                          (Join-Path $templatesRoot 'backups\academy-template-sha256sums.txt'))) {
@@ -43,7 +45,7 @@ try {
     & $ssh -o ConnectTimeout=15 $remote 'mkdir -p /root/gdp-install'
     if ($LASTEXITCODE -ne 0) { throw 'Could not connect or create the remote staging directory.' }
 
-    & $scp -r -p $mediaRoot $installerRoot $contentRoot $templatesRoot "${remote}:${remoteFolder}/"
+    & $scp -r -p $mediaRoot $installerRoot $contentRoot $templatesRoot $updateRoot "${remote}:${remoteFolder}/"
     if ($LASTEXITCODE -ne 0) { throw 'Media transfer failed. Re-run only after checking the remote staging directory.' }
 
     Write-Host ''

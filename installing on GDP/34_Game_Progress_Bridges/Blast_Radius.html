@@ -1,0 +1,786 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Blast Radius</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: top-down cloud security operations floor (canvas hub) with DOM puzzle overlays.
+   Single committed dark "cloud console at midnight" world — intentionally single-theme. */
+:root{
+  --bg:#080a12;
+  --floor:#0c0f1b;
+  --panel:#111526;
+  --panel-2:#0a0d18;
+  --edge:#20263c;
+  --fg:#cdd3e8;
+  --muted:#6d7794;
+  --dim:#454d6b;
+  --accent:#8a7cff;        /* cloud indigo */
+  --accent-2:#38d6c6;      /* teal highlight */
+  --accent-dim:#3b357a;
+  --amber:#f2b23e;
+  --red:#ff5d6c;
+  --blue:#56a8ff;
+  --violet:#b48cff;
+  --good:#38d6c6;
+  --warn:#f2b23e;
+  --crit:#ff5d6c;
+  color-scheme:dark;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --sans:"IBM Plex Sans",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--sans);font-size:15px;line-height:1.5;overflow:hidden;-webkit-text-size-adjust:100%}
+h1,h2,h3{font-family:var(--mono);text-wrap:balance;margin:0}
+code,kbd,.mono{font-family:var(--mono)}
+kbd{background:var(--panel);border:1px solid var(--edge);border-bottom-width:2px;border-radius:4px;padding:1px 6px;font-size:.82em;color:var(--fg)}
+button{font-family:var(--sans);cursor:pointer}
+::selection{background:var(--accent-dim);color:#efeafe}
+#app{position:fixed;inset:0;display:flex;flex-direction:column;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+#hud{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px max(14px,env(safe-area-inset-left,0px));padding-right:max(14px,env(safe-area-inset-right,0px));background:linear-gradient(180deg,#0c1020,#090c17);border-bottom:1px solid var(--edge);font-family:var(--mono);font-size:12.5px;min-height:46px;z-index:5}
+#hud .brand{color:var(--accent);font-weight:600;letter-spacing:.06em}
+#hud .brand b{color:var(--fg)}
+#hud .sp{flex:1}
+#hud .stat{color:var(--muted)}
+#hud .stat b{color:var(--fg);font-variant-numeric:tabular-nums}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--red);box-shadow:0 0 8px var(--red);margin-right:5px;vertical-align:middle;animation:pulse 2s infinite}
+@keyframes pulse{50%{opacity:.35}}
+@media (prefers-reduced-motion:reduce){.dot{animation:none}}
+#stage{flex:1;position:relative;overflow:hidden;background:radial-gradient(120% 90% at 50% -10%,#121634 0%,#080a12 60%)}
+#game{position:absolute;inset:0;margin:auto;display:block;touch-action:none}
+#prompt{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);background:rgba(10,13,24,.9);border:1px solid var(--edge);border-radius:10px;padding:9px 15px;font-family:var(--mono);font-size:13px;color:var(--fg);display:none;align-items:center;gap:10px;max-width:92%;z-index:4;backdrop-filter:blur(4px)}
+#prompt .k{color:var(--accent)}
+#prompt.show{display:flex}
+#touch{position:absolute;inset:auto 0 0 0;display:none;justify-content:space-between;align-items:flex-end;padding:0 max(16px,env(safe-area-inset-left,0px)) 16px;z-index:4;pointer-events:none}
+#touch>*{pointer-events:auto}
+.dpad{display:grid;grid-template-columns:repeat(3,52px);grid-template-rows:repeat(3,52px);gap:5px;opacity:.85}
+.dpad button{border:1px solid var(--edge);background:rgba(17,21,38,.85);color:var(--accent);border-radius:10px;font-size:20px;line-height:1;display:flex;align-items:center;justify-content:center}
+.dpad button:active{background:var(--accent-dim);color:#fff}
+.dpad .nd{visibility:hidden}
+#actBtn{width:70px;height:70px;border-radius:50%;border:2px solid var(--accent-dim);background:rgba(17,21,38,.9);color:var(--accent);font-family:var(--mono);font-weight:600;font-size:14px;align-self:flex-end}
+#actBtn:active{background:var(--accent-dim);color:#fff}
+.overlay{position:absolute;inset:0;z-index:20;display:none;background:rgba(5,7,14,.74);backdrop-filter:blur(3px);overflow-y:auto;-webkit-overflow-scrolling:touch}
+.overlay.show{display:block}
+.sheet{max-width:860px;margin:0 auto;min-height:100%;padding:20px max(16px,env(safe-area-inset-left,0px)) 40px;padding-right:max(16px,env(safe-area-inset-right,0px))}
+.card{background:var(--panel);border:1px solid var(--edge);border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.card.pad{padding:22px}
+@media(max-width:520px){.card.pad{padding:16px}}
+.pz-top{display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+.pz-top .lvlno{font-family:var(--mono);color:#0c0a24;background:var(--accent);font-weight:700;border-radius:7px;padding:3px 9px;font-size:13px}
+.pz-top h2{font-size:19px;flex:1;min-width:140px}
+.diff{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;padding:3px 8px;border-radius:20px;border:1px solid currentColor}
+.diff.d1{color:var(--good)}.diff.d2{color:#7fd0e0}.diff.d3{color:var(--amber)}.diff.d4{color:#ff9f45}.diff.d5{color:var(--red)}.diff.d6{color:var(--violet)}
+.x{margin-left:auto;background:transparent;border:1px solid var(--edge);color:var(--muted);border-radius:8px;width:34px;height:34px;font-size:18px;line-height:1}
+.x:hover{color:var(--fg);border-color:var(--muted)}
+.brief{color:var(--muted);font-size:14px;margin:0 0 16px;border-left:2px solid var(--accent-dim);padding-left:12px}
+.brief b{color:var(--fg)}
+.sect-label{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);margin:18px 0 8px}
+.term{background:var(--panel-2);border:1px solid var(--edge);border-radius:10px;overflow:hidden;margin:4px 0}
+.term-bar{display:flex;align-items:center;gap:7px;padding:7px 11px;background:#090c16;border-bottom:1px solid var(--edge);font-family:var(--mono);font-size:11.5px;color:var(--muted)}
+.term-bar .tl{display:flex;gap:5px}.term-bar .tl i{width:10px;height:10px;border-radius:50%;display:block}
+.term-bar .tl i:nth-child(1){background:#ff5f56}.term-bar .tl i:nth-child(2){background:#ffbd2e}.term-bar .tl i:nth-child(3){background:#27c93f}
+.term-body{padding:12px;font-family:var(--mono);font-size:12.5px;overflow-x:auto;line-height:1.65;white-space:pre-wrap;word-break:break-word}
+.term-body.sm{font-size:11.5px}
+.c-g{color:var(--accent-2)}.c-a{color:var(--amber)}.c-r{color:var(--red)}.c-b{color:var(--blue)}.c-m{color:var(--muted)}.c-v{color:var(--violet)}.c-p{color:var(--accent)}
+.clue{cursor:pointer;border-radius:4px;transition:background .12s;padding:0 2px}
+.clue:hover{background:rgba(242,178,62,.14)}
+.clue.found{background:rgba(255,93,108,.22);outline:1px solid var(--red);color:#ffd9dd}
+.clue.wrong{animation:shake .3s}
+@keyframes shake{25%{transform:translateX(-3px)}75%{transform:translateX(3px)}}
+.tbl-wrap{overflow-x:auto;border:1px solid var(--edge);border-radius:10px}
+table.log{border-collapse:collapse;width:100%;font-family:var(--mono);font-size:12px;min-width:460px}
+table.log th{position:sticky;top:0;background:#090c16;color:var(--muted);text-align:left;padding:7px 10px;border-bottom:1px solid var(--edge);font-weight:600;white-space:nowrap}
+table.log td{padding:6px 10px;border-bottom:1px solid #131829;white-space:nowrap}
+table.log tr:hover td{background:#0d1222}
+.pill{font-family:var(--mono);font-size:10.5px;padding:1px 7px;border-radius:12px;font-weight:600}
+.pill.ok{background:rgba(56,214,198,.16);color:var(--good)}
+.pill.fail{background:rgba(255,93,108,.16);color:var(--red)}
+.pill.warn{background:rgba(242,178,62,.16);color:var(--amber)}
+.opts{display:flex;flex-direction:column;gap:9px;margin:6px 0}
+.opt{display:flex;gap:11px;align-items:flex-start;padding:11px 13px;border:1px solid var(--edge);border-radius:10px;background:var(--panel-2);text-align:left;color:var(--fg);font-size:13.5px;width:100%}
+.opt:hover{border-color:var(--muted)}
+.opt.sel{border-color:var(--accent);background:rgba(138,124,255,.12)}
+.opt .box{width:18px;height:18px;border:1px solid var(--dim);border-radius:5px;flex:none;margin-top:1px;display:flex;align-items:center;justify-content:center;font-size:12px;color:#0c0a24}
+.opt.sel .box{background:var(--accent);border-color:var(--accent)}
+.opt.radio .box{border-radius:50%}
+.opt .tag{font-family:var(--mono);font-size:10.5px;color:var(--dim);display:block;margin-top:3px}
+.field{display:flex;flex-direction:column;gap:5px;margin:10px 0}
+.field label{font-family:var(--mono);font-size:11.5px;color:var(--muted);letter-spacing:.04em}
+.field input{background:var(--panel-2);border:1px solid var(--edge);border-radius:9px;padding:11px 13px;color:var(--fg);font-family:var(--mono);font-size:14px}
+.field input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(138,124,255,.16)}
+.field input.ok{border-color:var(--good)}.field input.bad{border-color:var(--red)}
+.order{display:flex;flex-direction:column;gap:7px}
+.oitem{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--edge);border-radius:9px;background:var(--panel-2);font-size:13px}
+.oitem .num{font-family:var(--mono);width:22px;height:22px;border-radius:6px;background:var(--edge);color:var(--fg);display:flex;align-items:center;justify-content:center;font-size:12px;flex:none}
+.oitem .mv{margin-left:auto;display:flex;gap:4px}
+.oitem .mv button{width:28px;height:28px;border-radius:6px;border:1px solid var(--edge);background:transparent;color:var(--muted);font-size:13px}
+.oitem .mv button:hover{color:var(--fg);border-color:var(--muted)}
+.btnrow{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px;align-items:center}
+.btn{border:1px solid var(--edge);background:var(--panel-2);color:var(--fg);padding:11px 18px;border-radius:10px;font-size:14px;font-weight:600;font-family:var(--mono)}
+.btn:hover{border-color:var(--muted)}
+.btn.primary{background:var(--accent);color:#0c0a24;border-color:var(--accent)}
+.btn.primary:hover{background:#9c90ff}
+.btn.primary:disabled{background:var(--accent-dim);opacity:.6;cursor:not-allowed}
+.btn.ghost{background:transparent;color:var(--muted)}
+.btn.sp{margin-left:auto}
+.fb{margin-top:16px;border-radius:10px;padding:13px 15px;font-size:13.5px;display:none;border:1px solid}
+.fb.show{display:block}
+.fb.pass{background:rgba(56,214,198,.1);border-color:#2a6b63;color:#bdf4ee}
+.fb.fail{background:rgba(255,93,108,.08);border-color:#5a2730;color:#ffc6cc}
+.fb.hint{background:rgba(242,178,62,.08);border-color:#5a4620;color:#f4d79a}
+.fb b{color:#fff}
+.fb .mitre{font-family:var(--mono);font-size:11.5px;color:var(--muted);margin-top:8px;display:block}
+.title-wrap{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:6px;padding-top:4vh}
+.title-wrap .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.3em;color:var(--accent);text-transform:uppercase}
+.title-wrap h1{font-size:clamp(34px,9vw,60px);letter-spacing:-.01em;line-height:.95;margin:4px 0}
+.title-wrap h1 span{color:var(--accent)}
+.title-wrap .tag{color:var(--muted);max-width:52ch;margin:6px auto 0;font-size:15px}
+.ttable{width:100%;margin-top:22px;border-collapse:collapse;font-family:var(--mono);font-size:12.5px}
+.ttable td{padding:9px 10px;border-bottom:1px solid var(--edge);text-align:left}
+.ttable .n{color:var(--accent);width:26px}.ttable .t{color:var(--fg)}.ttable .d{color:var(--dim);text-align:right;white-space:nowrap}
+.legal{color:var(--dim);font-size:12px;margin-top:20px;max-width:60ch}
+#missions{position:absolute;top:50px;right:max(10px,env(safe-area-inset-right,0px));z-index:21;width:min(330px,calc(100vw - 20px));display:none}
+#missions.show{display:block}
+.mrow{display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--edge);font-size:13px}
+.mrow:last-child{border-bottom:none}
+.mrow .st{width:20px;height:20px;border-radius:6px;flex:none;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:11px;font-weight:700}
+.mrow .st.done{background:var(--accent);color:#0c0a24}
+.mrow .st.open{background:var(--panel-2);border:1px solid var(--edge);color:var(--muted)}
+.mrow .st.lock{background:transparent;border:1px dashed var(--dim);color:var(--dim)}
+.mrow .nm{flex:1}.mrow .nm small{display:block;color:var(--dim);font-family:var(--mono);font-size:10.5px}
+.mrow.locked{opacity:.5}
+.kv{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
+.kv .k{font-family:var(--mono);font-size:11px;background:var(--panel-2);border:1px solid var(--edge);border-radius:6px;padding:4px 9px;color:var(--muted)}
+.kv .k b{color:var(--fg)}
+.note{font-size:12.5px;color:var(--muted);margin-top:10px}
+a{color:var(--blue)}
+</style>
+
+<div id="app">
+  <div id="hud">
+    <span class="brand"><b>BLAST</b> RADIUS</span>
+    <span class="stat"><span class="dot"></span>RISK <b id="threatcon">6</b></span>
+    <span class="sp"></span>
+    <span class="stat">FINDINGS <b><span id="solvedN">0</span>/6</b></span>
+    <span class="stat">SCORE <b id="scoreN">0</b></span>
+    <span class="stat">TIME <b id="clock">00:00</b></span>
+    <button class="btn ghost" id="missBtn" style="padding:6px 12px;font-size:12px">FINDINGS ▾</button>
+  </div>
+  <div id="stage">
+    <canvas id="game"></canvas>
+    <div id="prompt"></div>
+    <div id="touch">
+      <div class="dpad"><button class="nd"></button><button data-d="up">▲</button><button class="nd"></button>
+      <button data-d="left">◀</button><button class="nd"></button><button data-d="right">▶</button>
+      <button class="nd"></button><button data-d="down">▼</button><button class="nd"></button></div>
+      <button id="actBtn">OPEN</button>
+    </div>
+  </div>
+  <div class="card" id="missions"></div>
+  <div class="overlay" id="overlay"><div class="sheet" id="sheet"></div></div>
+</div>
+
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+const el = (t,c,h)=>{const e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e;};
+const esc = s => String(s).replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));
+
+const SAVE_KEY="blast-radius-v1";
+let S={solved:[false,false,false,false,false,false],score:0,hints:{},elapsed:0,started:false};
+const ACADEMY_PROGRESS_CHANNEL="academy-game-progress-v1";
+const academyEmbedded=window.parent!==window;
+let academyProgressReady=!academyEmbedded;
+function restoreSavedState(raw){
+  try{
+    const saved=JSON.parse(raw);
+    if(!saved||!Array.isArray(saved.solved)||saved.solved.length!==6||saved.solved.some(value=>typeof value!=="boolean")||
+       !Number.isFinite(saved.score)||saved.score<0||!saved.hints||typeof saved.hints!=="object"||Array.isArray(saved.hints)||
+       !Number.isFinite(saved.elapsed)||saved.elapsed<0||typeof saved.started!=="boolean")return false;
+    if(Object.entries(saved.hints).some(([id,count])=>!/^\d$/.test(id)||Number(id)>5||!Number.isInteger(count)||count<0))return false;
+    S={solved:[...saved.solved],score:saved.score,hints:{...saved.hints},elapsed:saved.elapsed,started:saved.started};
+    return true;
+  }catch(e){return false;}
+}
+function loadAcademyProgress(){
+  return new Promise(resolve=>{
+    let settled=false;
+    const finish=loaded=>{if(settled)return;settled=true;clearTimeout(timer);window.removeEventListener("message",receive);academyProgressReady=loaded;resolve(loaded);};
+    const receive=event=>{const message=event.data;if(event.source!==window.parent||!message||message.channel!==ACADEMY_PROGRESS_CHANNEL)return;
+      if(message.type==="failed"){finish(false);return;}
+      if(message.type==="loaded")finish(message.state===null||(typeof message.state==="string"&&restoreSavedState(message.state)));
+    };
+    const timer=setTimeout(()=>finish(false),10000);
+    window.addEventListener("message",receive);
+    window.parent.postMessage({channel:ACADEMY_PROGRESS_CHANNEL,type:"load"},"*");
+  });
+}
+function loadLocalProgress(){try{const raw=localStorage.getItem(SAVE_KEY);if(raw)restoreSavedState(raw);}catch(e){}}
+function save(){
+  if(academyEmbedded){if(academyProgressReady)window.parent.postMessage({channel:ACADEMY_PROGRESS_CHANNEL,type:"save",state:JSON.stringify(S)},"*");return;}
+  try{localStorage.setItem(SAVE_KEY,JSON.stringify(S));}catch(e){}
+}
+if(academyEmbedded){
+  window.addEventListener("message",event=>{const message=event.data;
+    if(!academyProgressReady||event.source!==window.parent||!message||message.channel!==ACADEMY_PROGRESS_CHANNEL||message.type!=="flush"||typeof message.requestId!=="string")return;
+    tick();save();window.parent.postMessage({channel:ACADEMY_PROGRESS_CHANNEL,type:"flushed",requestId:message.requestId},"*");
+  });
+}else loadLocalProgress();
+let t0=performance.now()-(S.elapsed||0)*1000, running=false;
+function fmt(sec){const m=Math.floor(sec/60),s=Math.floor(sec%60);return String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');}
+function tick(){if(running){S.elapsed=(performance.now()-t0)/1000;$('#clock').textContent=fmt(S.elapsed);}}
+setInterval(()=>{tick();if(running&&Math.floor(S.elapsed)%5===0)save();},1000);
+function refreshHUD(){const n=S.solved.filter(Boolean).length;$('#solvedN').textContent=n;$('#scoreN').textContent=S.score;$('#threatcon').textContent=6-Math.min(6,n);renderMissions();}
+
+const LEVELS=[
+ {id:0,name:"Exposed Bucket",diff:1,dname:"Storage",pts:100,station:"S3",
+  mitre:"T1530 Data from Cloud Storage · public object ACL / bucket policy"},
+ {id:1,name:"Wildcard IAM",diff:2,dname:"IAM",pts:150,station:"IAM",
+  mitre:"T1098 Account Manipulation · least privilege · Action/Resource \"*\""},
+ {id:2,name:"The MFA Gap",diff:3,dname:"Identity",pts:200,station:"IDP",
+  mitre:"T1078.004 Valid Cloud Accounts · legacy auth / conditional access bypass"},
+ {id:3,name:"Escalation Path",diff:4,dname:"PrivEsc",pts:250,station:"ROLES",
+  mitre:"T1548 Abuse Elevation · iam:PassRole / CreatePolicyVersion chains"},
+ {id:4,name:"Leaked Key",diff:5,dname:"Detection",pts:300,station:"TRAIL",
+  mitre:"T1552.001 Credentials in Files · CloudTrail anomaly · T1537 exfil"},
+ {id:5,name:"Blast Radius",diff:6,dname:"Response",pts:400,station:"IR",
+  mitre:"Cloud IR: scope, contain, preserve logs, revoke without nuking prod"},
+];
+function unlocked(i){return i===0||S.solved[i-1];}
+
+/* ===== HUB ===== */
+const cv=$('#game'),ctx=cv.getContext('2d');
+const W=960,H=600; cv.width=W;cv.height=H;
+const DESKS=[{x:150,y:140,lvl:0},{x:410,y:140,lvl:1},{x:670,y:140,lvl:2},{x:150,y:420,lvl:3},{x:410,y:420,lvl:4},{x:720,y:430,lvl:5,big:true}];
+const DESK_W=120,DESK_H=78,BIG_W=180,BIG_H=120;
+const player={x:W/2,y:300,w:26,h:34,spd:3.0};
+const keys={}; let nearDesk=null;
+function deskRect(d){const w=d.big?BIG_W:DESK_W,h=d.big?BIG_H:DESK_H;return {x:d.x,y:d.y,w,h};}
+function rectsOverlap(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;}
+function updatePlayer(){
+  if(overlayOpen)return;
+  let dx=0,dy=0;
+  if(keys.up)dy-=1;if(keys.down)dy+=1;if(keys.left)dx-=1;if(keys.right)dx+=1;
+  if(dx&&dy){dx*=0.707;dy*=0.707;}
+  const nx=player.x+dx*player.spd,ny=player.y+dy*player.spd;
+  let bx={x:nx,y:player.y,w:player.w,h:player.h},by={x:player.x,y:ny,w:player.w,h:player.h};
+  let blockX=false,blockY=false;
+  for(const d of DESKS){const r=deskRect(d);if(rectsOverlap(bx,r))blockX=true;if(rectsOverlap(by,r))blockY=true;}
+  player.x=Math.max(12,Math.min(W-player.w-12,blockX?player.x:nx));
+  player.y=Math.max(12,Math.min(H-player.h-12,blockY?player.y:ny));
+  nearDesk=null;let best=1e9;
+  for(const d of DESKS){const r=deskRect(d);const cx=r.x+r.w/2,cy=r.y+r.h+22;
+    const dist=Math.hypot(player.x+player.w/2-cx,player.y+player.h/2-cy);if(dist<70&&dist<best){best=dist;nearDesk=d;}}
+  const p=$('#prompt');
+  if(nearDesk){const L=LEVELS[nearDesk.lvl];const ok=unlocked(nearDesk.lvl);
+    if(ok){p.classList.add('show');p.innerHTML=`<span class="k">[ OPEN / E ]</span> ${S.solved[nearDesk.lvl]?'↻ Reopen':'▶ Open'} — Finding ${nearDesk.lvl+1}: ${esc(L.name)}`;}
+    else{p.classList.add('show');p.innerHTML=`<span style="color:var(--dim)">🔒 Locked — resolve Finding ${nearDesk.lvl} first</span>`;}
+  }else p.classList.remove('show');
+}
+let anim=0;
+function draw(){
+  anim++;ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#0a0d18';ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle='rgba(48,56,92,.3)';ctx.lineWidth=1;
+  for(let x=0;x<=W;x+=40){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+  for(let y=0;y<=H;y+=40){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+  drawWallScreen();
+  for(const d of DESKS)drawDesk(d);
+  drawPlayer();
+  ctx.fillStyle='rgba(69,77,107,.6)';ctx.font='11px "IBM Plex Mono",monospace';ctx.textAlign='left';
+  ctx.fillText('CLOUD SECURITY OPS — prod-account 4471',16,H-14);
+  ctx.textAlign='right';ctx.fillText('JMOC // us-east-1',W-16,H-14);ctx.textAlign='left';
+}
+function drawWallScreen(){
+  const g=ctx.createLinearGradient(0,0,0,70);g.addColorStop(0,'#111634');g.addColorStop(1,'#0a0d18');
+  ctx.fillStyle=g;ctx.fillRect(0,0,W,70);ctx.strokeStyle='#272f52';ctx.strokeRect(.5,.5,W-1,70);
+  const n=S.solved.filter(Boolean).length;
+  ctx.font='12px "IBM Plex Mono",monospace';ctx.fillStyle=n>=6?'#38d6c6':'#ff5d6c';ctx.textAlign='center';
+  ctx.fillText(n>=6?'● POSTURE SECURE — ALL FINDINGS RESOLVED':'● ACTIVE FINDINGS — '+(6-n)+' OPEN',W/2,26);
+  ctx.strokeStyle='rgba(138,124,255,.5)';ctx.lineWidth=1.5;ctx.beginPath();
+  for(let i=0;i<W;i+=14){const y=46+Math.sin((i+anim*2)/40)*8+Math.sin(i/13)*4;i===0?ctx.moveTo(i,y):ctx.lineTo(i,y);}
+  ctx.stroke();ctx.textAlign='left';
+}
+function drawDesk(d){
+  const r=deskRect(d),L=LEVELS[d.lvl],ok=unlocked(d.lvl),done=S.solved[d.lvl];
+  ctx.fillStyle='rgba(0,0,0,.35)';roundRect(r.x+4,r.y+6,r.w,r.h,8);ctx.fill();
+  ctx.fillStyle=done?'#122630':ok?'#161b33':'#111526';roundRect(r.x,r.y,r.w,r.h,8);ctx.fill();
+  ctx.strokeStyle=done?'#2a7f88':ok?'#343d6b':'#1f2740';ctx.lineWidth=1.5;roundRect(r.x,r.y,r.w,r.h,8);ctx.stroke();
+  const mw=r.w*0.56,mh=r.h*0.42,mx=r.x+(r.w-mw)/2,my=r.y+10;
+  const col=done?'#38d6c6':ok?'#8a7cff':'#454d6b';
+  if(ok&&!done){ctx.save();ctx.shadowColor=col;ctx.shadowBlur=14+Math.sin(anim/20)*5;}
+  else if(done){ctx.save();ctx.shadowColor=col;ctx.shadowBlur=10;}else ctx.save();
+  ctx.fillStyle=done?'#0b3338':ok?'#171a3a':'#0c1119';roundRect(mx,my,mw,mh,4);ctx.fill();ctx.restore();
+  ctx.strokeStyle=col;ctx.lineWidth=1.5;roundRect(mx,my,mw,mh,4);ctx.stroke();
+  ctx.strokeStyle='rgba(255,255,255,.05)';ctx.lineWidth=1;
+  for(let y=my+4;y<my+mh;y+=4){ctx.beginPath();ctx.moveTo(mx+3,y);ctx.lineTo(mx+mw-3,y);ctx.stroke();}
+  ctx.font='bold 14px "IBM Plex Mono",monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle=col;
+  ctx.fillText(done?'✓':ok?(d.lvl+1):'🔒',mx+mw/2,my+mh/2);ctx.textBaseline='alphabetic';
+  ctx.font='10.5px "IBM Plex Mono",monospace';ctx.textAlign='center';ctx.fillStyle=ok?'#8a93b4':'#454d6b';
+  ctx.fillText((d.big?'IR BRIDGE':'CONSOLE '+L.station),r.x+r.w/2,r.y+r.h+16);
+  ctx.fillStyle=done?'#38d6c6':ok?'#cdd3e8':'#454d6b';ctx.font='11px "IBM Plex Sans",sans-serif';
+  wrapText('Finding '+(d.lvl+1)+': '+L.name,r.x+r.w/2,r.y+r.h+30,r.w+40,12);ctx.textAlign='left';
+}
+function wrapText(txt,cx,y,maxw,lh){const words=txt.split(' ');let line='';let yy=y;
+  for(const w of words){const test=line?line+' '+w:w;if(ctx.measureText(test).width>maxw&&line){ctx.fillText(line,cx,yy);line=w;yy+=lh;}else line=test;}ctx.fillText(line,cx,yy);}
+function drawPlayer(){
+  const p=player;
+  ctx.fillStyle='rgba(0,0,0,.4)';ctx.beginPath();ctx.ellipse(p.x+p.w/2,p.y+p.h,14,5,0,0,7);ctx.fill();
+  ctx.fillStyle='#1f2444';roundRect(p.x,p.y+10,p.w,p.h-10,5);ctx.fill();
+  ctx.strokeStyle='#8a7cff';ctx.lineWidth=1.2;roundRect(p.x,p.y+10,p.w,p.h-10,5);ctx.stroke();
+  ctx.fillStyle='#d8b48a';ctx.beginPath();ctx.arc(p.x+p.w/2,p.y+8,8,0,7);ctx.fill();
+  ctx.fillStyle='#38d6c6';ctx.fillRect(p.x+p.w/2-3,p.y+16,6,8);
+}
+function roundRect(x,y,w,h,r){ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();}
+function loop(){updatePlayer();draw();requestAnimationFrame(loop);}
+function fit(){const stage=$('#stage');const sw=stage.clientWidth,sh=stage.clientHeight;const scale=Math.min(sw/W,sh/H);cv.style.width=(W*scale)+'px';cv.style.height=(H*scale)+'px';}
+window.addEventListener('resize',fit);
+
+const KMAP={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',w:'up',s:'down',a:'left',d:'right',W:'up',S:'down',A:'left',D:'right'};
+addEventListener('keydown',e=>{if(overlayOpen){if(e.key==='Escape')closeOverlay();return;}
+  if(KMAP[e.key]){keys[KMAP[e.key]]=true;e.preventDefault();}
+  if((e.key==='e'||e.key==='E'||e.key==='Enter')&&nearDesk&&unlocked(nearDesk.lvl))openLevel(nearDesk.lvl);});
+addEventListener('keyup',e=>{if(KMAP[e.key])keys[KMAP[e.key]]=false;});
+document.querySelectorAll('#touch .dpad button[data-d]').forEach(b=>{const d=b.dataset.d;
+  const on=e=>{e.preventDefault();keys[d]=true;},off=e=>{e.preventDefault();keys[d]=false;};
+  b.addEventListener('touchstart',on,{passive:false});b.addEventListener('touchend',off);b.addEventListener('touchcancel',off);
+  b.addEventListener('mousedown',on);b.addEventListener('mouseup',off);b.addEventListener('mouseleave',off);});
+$('#actBtn').addEventListener('click',()=>{if(nearDesk&&unlocked(nearDesk.lvl))openLevel(nearDesk.lvl);});
+if(matchMedia('(pointer:coarse)').matches)$('#touch').style.display='flex';
+$('#missBtn').addEventListener('click',()=>$('#missions').classList.toggle('show'));
+function renderMissions(){const m=$('#missions');m.innerHTML='';
+  LEVELS.forEach(L=>{const done=S.solved[L.id],ok=unlocked(L.id);const row=el('div','mrow'+(ok?'':' locked'));
+    row.innerHTML=`<span class="st ${done?'done':ok?'open':'lock'}">${done?'✓':ok?(L.id+1):'🔒'}</span>
+      <span class="nm">Finding ${L.id+1}: ${esc(L.name)}<small>${esc(L.dname)} · ${L.pts} pts</small></span>`;
+    if(ok)row.style.cursor='pointer',row.onclick=()=>{m.classList.remove('show');openLevel(L.id);};
+    m.appendChild(row);});}
+
+/* ===== overlay system ===== */
+let overlayOpen=false,curLevel=null;
+function openOverlay(html){$('#sheet').innerHTML=html;$('#overlay').classList.add('show');overlayOpen=true;$('#overlay').scrollTop=0;}
+function closeOverlay(){$('#overlay').classList.remove('show');overlayOpen=false;curLevel=null;}
+window.closeOverlay=closeOverlay;
+function levelHeader(L){return `<div class="pz-top"><span class="lvlno">FINDING ${L.id+1}</span><h2>${esc(L.name)}</h2>
+  <span class="diff d${L.diff}">${'◆'.repeat(Math.min(L.diff,6))} ${esc(L.dname)}</span>
+  <button class="x" onclick="closeOverlay()">✕</button></div>`;}
+function feedbackBox(){return `<div class="fb" id="fb"></div>`;}
+function showFb(kind,html,mitre){const fb=$('#fb');fb.className='fb show '+kind;
+  fb.innerHTML=html+(mitre?`<span class="mitre">⬡ ${esc(mitre)}</span>`:'');fb.scrollIntoView({behavior:'smooth',block:'nearest'});}
+function clearFb(){const fb=$('#fb');if(fb){fb.className='fb';fb.innerHTML='';}}
+function useHint(lvl,texts){const used=S.hints[lvl]||0;
+  if(used>=texts.length){showFb('hint',`<b>No more hints.</b> Read the policy, not the promise.`);return;}
+  S.hints[lvl]=used+1;showFb('hint',`<b>Hint ${used+1}/${texts.length}</b> — ${texts[used]}<br><span style="color:var(--dim);font-size:12px">(−10 pts at close)</span>`);save();}
+function solveLevel(L,note){const first=!S.solved[L.id];S.solved[L.id]=true;
+  if(first){const hp=(S.hints[L.id]||0)*10;const gain=Math.max(20,L.pts-hp);S.score+=gain;save();refreshHUD();
+    showFb('pass',`<b>✓ FINDING RESOLVED.</b> ${note||''}<br>+${gain} pts${hp?` <span style="color:var(--dim)">(−${hp} hints)</span>`:''}. ${L.id<5?'Next console unlocked.':'Posture secured.'}`,L.mitre);}
+  else showFb('pass',`<b>✓ Correct.</b> ${note||''} (already resolved — no new points)`,L.mitre);
+  const sb=$('#solveBtn');if(sb){sb.textContent=L.id<5?'Back to floor →':'Close incident →';sb.onclick=()=>{if(L.id===5){closeOverlay();showSummary();}else closeOverlay();};}}
+function hintBtn(L,texts){const b=el('button','btn ghost');b.textContent='💡 Hint';b.onclick=()=>useHint(L.id,texts);return b;}
+function bindRadio(sel,attr,cb){const g=$(sel);g.querySelectorAll('.opt').forEach(o=>o.addEventListener('click',()=>{
+  g.querySelectorAll('.opt').forEach(x=>{x.classList.remove('sel');x.querySelector('.box').textContent='';});
+  o.classList.add('sel');o.querySelector('.box').textContent='✓';cb(o.dataset[attr]);}));}
+function bindMulti(sel,set,attr){$(sel).querySelectorAll('.opt').forEach(o=>o.addEventListener('click',()=>{
+  o.classList.toggle('sel');const on=o.classList.contains('sel');o.querySelector('.box').textContent=on?'✓':'';
+  const k=o.dataset[attr];on?set.add(k):set.delete(k);}));}
+function openLevel(i){if(!unlocked(i))return;curLevel=i;running=true;S.started=true;
+  [renderL1,renderL2,renderL3,renderL4,renderL5,renderL6][i]();}
+
+/* ===========================================================================
+   FINDING 1 — EXPOSED STORAGE BUCKET
+   =========================================================================== */
+function renderL1(){
+  const L=LEVELS[0];
+  const buckets=[
+    {n:'prod-app-static-assets',acc:'Public',pol:'allUsers: s3:GetObject',data:'CSS/JS/images (static site)',bad:false,note:'public by design — static website content'},
+    {n:'prod-db-backups-4471',acc:'Public',pol:'Principal "*": s3:GetObject',data:'nightly RDS dumps (PII)',bad:true,note:'sensitive data world-readable'},
+    {n:'internal-terraform-state',acc:'Private',pol:'account-only, BPA on',data:'tfstate',bad:false,note:'locked down'},
+    {n:'app-user-uploads',acc:'Private',pol:'presigned URLs only',data:'user files',bad:false,note:'fine'},
+  ];
+  const body=buckets.map((b,i)=>`<tr data-i="${i}" style="cursor:pointer">
+    <td>${esc(b.n)}</td><td>${b.acc==='Public'?'<span class="pill warn">Public</span>':'<span class="pill ok">Private</span>'}</td>
+    <td class="c-m">${esc(b.pol)}</td><td class="${b.bad?'c-r':'c-m'}">${esc(b.data)}</td></tr>`).join('');
+  openOverlay(`${levelHeader(L)}
+   <p class="brief">Posture scan flagged public buckets in the prod account. "Public" isn't automatically a finding — a static-site bucket is <i>supposed</i> to be world-readable. The finding is public <b>+ sensitive</b>. Pick the bucket that's actually exposed, then choose the fix.</p>
+   <div class="sect-label">S3 inventory — prod-account 4471</div>
+   <div class="tbl-wrap"><table class="log"><thead><tr><th>Bucket</th><th>Access</th><th>Effective policy</th><th>Contents</th></tr></thead><tbody id="bbody">${body}</tbody></table></div>
+   <p class="note" id="bpick">Flagged bucket: <b>none</b></p>
+   <div class="sect-label">Remediation</div>
+   <div class="opts" id="fix">
+     <button class="opt radio" data-f="one"><span class="box"></span><span>Delete the one PII object that triggered the alert</span></button>
+     <button class="opt radio" data-f="bpa"><span class="box"></span><span>Enable S3 Block Public Access on the bucket (and account-level), remove the public grant, rotate exposed data, and review access logs for who read it</span></button>
+     <button class="opt radio" data-f="all"><span class="box"></span><span>Make every bucket in the account private, including the static-site bucket</span></button>
+   </div>
+   ${feedbackBox()}<div class="btnrow" id="row"></div>`);
+  let pick=null,fix=null;
+  $('#bbody').querySelectorAll('tr').forEach(tr=>tr.addEventListener('click',()=>{
+    $('#bbody').querySelectorAll('tr').forEach(x=>x.style.outline='');tr.style.outline='2px solid var(--accent)';
+    pick=+tr.dataset.i;$('#bpick').innerHTML='Flagged bucket: <b>'+esc(buckets[pick].n)+'</b>';}));
+  bindRadio('#fix','f',f=>fix=f);
+  const row=$('#row');
+  row.appendChild(hintBtn(L,[
+    "Two buckets are public. One holds static site assets (intended); the other holds something that must never be world-readable.",
+    "prod-db-backups-4471 exposes nightly RDS dumps (PII) to Principal \"*\" — that's the real finding. The static-assets bucket being public is by design.",
+    "Don't just delete one object (the grant stays) and don't break the static site. Enable Block Public Access at bucket + account level, pull the grant, rotate the exposed data, and check access logs for reads."
+  ]));
+  const sub=el('button','btn primary sp');sub.textContent='Confirm';sub.id='solveBtn';
+  sub.onclick=()=>{clearFb();
+    if(pick!==1){showFb('fail',`That's not the finding. public + sensitive is the test — the static-assets bucket is meant to be public. Find the one exposing data that shouldn't be.`);return;}
+    if(fix!=='bpa'){showFb('fail',`Right bucket (prod-db-backups-4471). But deleting one object leaves the public grant open, and locking every bucket breaks the legit static site. Pick the complete, scoped fix.`);return;}
+    solveLevel(L,`prod-db-backups-4471 exposed RDS PII dumps to allUsers. Enable Block Public Access (bucket + account), remove the grant, rotate/notify on the exposed data, and pull access logs to see who downloaded it. The static-assets bucket stays public — that's intended.`);};
+  row.appendChild(sub);
+}
+
+/* ===========================================================================
+   FINDING 2 — WILDCARD IAM POLICY (click the dangerous statements)
+   =========================================================================== */
+function renderL2(){
+  const L=LEVELS[1];
+  openOverlay(`${levelHeader(L)}
+   <p class="brief">This policy is attached to <code>role/ci-deployer</code> — a build runner that should only push artifacts and update one Lambda. Review it line by line and <b>click every over-permissive element</b> (there are 3). Then pick the least-privilege remediation.</p>
+   <div class="sect-label">IAM policy — ci-deployer</div>
+   <div class="term"><div class="term-bar"><span class="tl"><i></i><i></i><i></i></span><span>ci-deployer-policy.json</span></div>
+   <div class="term-body sm">{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "Deploy",
+      "Effect": "Allow",
+      "Action": <span class="clue" data-id="action">"*"</span>,
+      "Resource": <span class="clue" data-id="resource">"*"</span>
+    },
+    {
+      "Sid": "Artifacts",
+      "Effect": "Allow",
+      "Action": ["s3:PutObject","s3:GetObject"],
+      "Resource": "arn:aws:s3:::ci-artifacts-4471/*"
+    },
+    {
+      "Sid": "PassAny",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": <span class="clue" data-id="passrole">"*"</span>
+    }
+  ]
+}</div></div>
+   <p class="note" id="ccount">Flagged: 0 / 3</p>
+   <div class="sect-label">Remediation</div>
+   <div class="opts" id="fix">
+     <button class="opt radio" data-f="scoped"><span class="box"></span><span>Replace the Allow <code>*</code>/<code>*</code> with the specific actions ci-deployer needs (e.g. <code>lambda:UpdateFunctionCode</code> on the one function ARN) and scope <code>iam:PassRole</code> to the single role it must pass, guarded by <code>iam:PassedToService</code></span></button>
+     <button class="opt radio" data-f="deny"><span class="box"></span><span>Leave the <code>*</code> but add a Deny on <code>iam:*</code></span></button>
+     <button class="opt radio" data-f="mfa"><span class="box"></span><span>Keep the policy; just require MFA to assume the role</span></button>
+   </div>
+   ${feedbackBox()}<div class="btnrow" id="row"></div>`);
+  const found=new Set();const REQ=['action','resource','passrole'];
+  $('#sheet').querySelectorAll('.clue').forEach(c=>c.addEventListener('click',()=>{
+    const id=c.dataset.id;
+    if(REQ.includes(id)){c.classList.add('found');found.add(id);$('#ccount').textContent='Flagged: '+found.size+' / 3';}
+    else{c.classList.add('wrong');setTimeout(()=>c.classList.remove('wrong'),300);}}));
+  let fix=null;bindRadio('#fix','f',f=>fix=f);
+  const row=$('#row');
+  row.appendChild(hintBtn(L,[
+    "A deployer needs a handful of actions on a few resources. Anything granting everything is the problem.",
+    "Three red flags: Action \"*\", Resource \"*\" (admin on everything), and iam:PassRole on Resource \"*\" (pass ANY role — a direct privilege-escalation primitive).",
+    "Fix = least privilege: enumerate the real actions on real ARNs, and scope PassRole to the one role it needs with an iam:PassedToService condition. A Deny band-aid or MFA doesn't undo a wildcard Allow."
+  ]));
+  const sub=el('button','btn primary sp');sub.textContent='Confirm';sub.id='solveBtn';
+  sub.onclick=()=>{clearFb();
+    if(found.size<3){showFb('fail',`You've flagged ${found.size} of 3. Look at the "Deploy" statement and the "PassAny" statement — wildcards in Action, Resource, and PassRole.`);return;}
+    if(fix!=='scoped'){showFb('fail',`All 3 flagged. But a Deny on top of a wildcard Allow is fragile, and MFA doesn't shrink the grant. Pick genuine least privilege.`);return;}
+    solveLevel(L,`Action "*" + Resource "*" gave ci-deployer full admin, and PassRole on "*" let it hand any role (including admin) to a service it controls — a classic escalation primitive. Scope both to the specific actions, ARNs, and single passable role with iam:PassedToService.`);};
+  row.appendChild(sub);
+}
+
+/* ===========================================================================
+   FINDING 3 — THE MFA GAP (sign-in logs + conditional access)
+   =========================================================================== */
+function renderL3(){
+  const L=LEVELS[2];
+  const signins=[
+    ['09:02','a.diaz','Atlanta, US','Browser','MFA','ok'],
+    ['09:14','svc_ci','us-east-1 (AWS)','API','key','ok'],
+    ['23:41','admin.jh','Sofia, BG','Legacy (IMAP)','none','bad'],
+    ['23:52','r.patel','Atlanta, US','Browser','MFA','ok'],
+    ['00:08','admin.jh','Atlanta, US','Browser','MFA','ok'],
+  ];
+  const body=signins.map((r,i)=>`<tr data-i="${i}" style="cursor:pointer">
+    <td class="c-m">${r[0]}</td><td>${r[1]}</td><td class="${r[5]==='bad'?'c-r':'c-m'}">${esc(r[2])}</td>
+    <td class="${r[3].startsWith('Legacy')?'c-a':'c-m'}">${esc(r[3])}</td>
+    <td>${r[4]==='MFA'?'<span class="pill ok">MFA</span>':r[4]==='key'?'<span class="pill ok">key</span>':'<span class="pill fail">none</span>'}</td>
+    <td><span class="pill ok">success</span></td></tr>`).join('');
+  openOverlay(`${levelHeader(L)}
+   <p class="brief">An admin account shows a successful sign-in that shouldn't have been possible. Review the sign-in logs and the conditional-access policies, find the malicious login, and pick the policy change that closes the gap it slipped through.</p>
+   <div class="sect-label">Sign-in logs (all "success")</div>
+   <div class="tbl-wrap"><table class="log"><thead><tr><th>Time</th><th>User</th><th>Location</th><th>Client</th><th>Auth</th><th>Result</th></tr></thead><tbody id="sbody">${body}</tbody></table></div>
+   <p class="note" id="spick">Flagged sign-in: <b>none</b></p>
+   <div class="sect-label">Conditional Access policies (current)</div>
+   <div class="term"><div class="term-bar"><span class="tl"><i></i><i></i><i></i></span><span>CA policy set</span></div>
+     <div class="term-body sm">CA-01  Require MFA for all users  —  <span class="c-a">excludes: legacy authentication clients</span>
+CA-02  Block sign-in from outside approved countries  —  <span class="c-a">state: report-only</span>
+CA-03  Require compliant device for admins  —  state: on</div></div>
+   <div class="sect-label">Which change closes the gap?</div>
+   <div class="opts" id="fix">
+     <button class="opt radio" data-f="legacy"><span class="box"></span><span>Block legacy authentication outright (it can't do MFA), and enforce CA-01 with no legacy exclusion; move CA-02 from report-only to enforced</span></button>
+     <button class="opt radio" data-f="pw"><span class="box"></span><span>Just reset admin.jh's password</span></button>
+     <button class="opt radio" data-f="alert"><span class="box"></span><span>Add an alert for foreign logins but change no policy</span></button>
+   </div>
+   ${feedbackBox()}<div class="btnrow" id="row"></div>`);
+  let pick=null,fix=null;
+  $('#sbody').querySelectorAll('tr').forEach(tr=>tr.addEventListener('click',()=>{
+    $('#sbody').querySelectorAll('tr').forEach(x=>x.style.outline='');tr.style.outline='2px solid var(--accent)';
+    pick=+tr.dataset.i;$('#spick').innerHTML='Flagged sign-in: <b>'+esc(signins[pick][1]+' @ '+signins[pick][0])+'</b>';}));
+  bindRadio('#fix','f',f=>fix=f);
+  const row=$('#row');
+  row.appendChild(hintBtn(L,[
+    "MFA succeeded for most. One admin login used a legacy protocol with no MFA, from an unusual country, at 23:41 — minutes before the real admin logged in normally from home.",
+    "admin.jh @ 23:41 from Sofia over Legacy (IMAP) with auth 'none' is the attacker. Legacy protocols can't prompt for MFA, and CA-01 explicitly excludes them.",
+    "The gap is the legacy-auth exclusion plus CA-02 sitting in report-only. Block legacy auth, drop the exclusion, and enforce the geo policy."
+  ]));
+  const sub=el('button','btn primary sp');sub.textContent='Confirm';sub.id='solveBtn';
+  sub.onclick=()=>{clearFb();
+    if(pick!==2){showFb('fail',`That sign-in used MFA or an expected key from a normal location. Find the admin login with no MFA over a legacy client from an unusual country.`);return;}
+    if(fix!=='legacy'){showFb('fail',`Right login (admin.jh, 23:41, Sofia, Legacy/IMAP). Resetting a password or adding an alert leaves the bypass open — legacy auth still skips MFA. Close the actual gap.`);return;}
+    solveLevel(L,`admin.jh @ 23:41 signed in via legacy IMAP from Sofia with no MFA — because CA-01 excluded legacy clients and CA-02 was only report-only. Block legacy auth, remove the exclusion, enforce the geo policy, then reset the credential and revoke sessions.`);};
+  row.appendChild(sub);
+}
+
+/* ===========================================================================
+   FINDING 4 — ESCALATION PATH (order the chain + break it)
+   =========================================================================== */
+function renderL4(){
+  const L=LEVELS[3];
+  const steps=[
+    {id:'policyver',t:'dev.user calls iam:CreatePolicyVersion on the policy attached to dev-role, setting a new default version granting *'},
+    {id:'assume',t:'dev.user (already allowed sts:AssumeRole on dev-role) assumes dev-role'},
+    {id:'admin',t:'dev-role now carries Allow */* → effective account admin'},
+  ];
+  const CORRECT=['policyver','assume','admin'];
+  let ord=[...steps].sort(()=>Math.random()-0.5);
+  openOverlay(`${levelHeader(L)}
+   <p class="brief">A pentest flagged that the low-priv <code>dev.user</code> can reach admin. Here are its permissions. Trace the escalation: order the steps of the chain, then pick the single permission to remove that breaks it with the least collateral.</p>
+   <div class="sect-label">dev.user — effective permissions</div>
+   <div class="term"><div class="term-bar"><span class="tl"><i></i><i></i><i></i></span><span>iam get-account-authorization-details (trimmed)</span></div>
+     <div class="term-body sm">dev.user:
+  - <span class="c-a">iam:CreatePolicyVersion</span> on policy/dev-boundary  (and iam:SetDefaultPolicyVersion)
+  - <span class="c-a">sts:AssumeRole</span> on role/dev-role
+  - s3:GetObject on arn:aws:s3:::dev-sandbox/*
+  - logs:PutLogEvents  (CloudWatch)
+
+role/dev-role trust: allows dev.user to assume it
+policy/dev-boundary: currently grants dev-role read-only on dev-sandbox</div></div>
+   <div class="sect-label">1 · Order the escalation chain</div>
+   <div class="order" id="order"></div>
+   <div class="sect-label">2 · Which single change breaks the chain?</div>
+   <div class="opts" id="fix">
+     <button class="opt radio" data-f="policyver"><span class="box"></span><span>Remove <code>iam:CreatePolicyVersion</code> / <code>iam:SetDefaultPolicyVersion</code> from dev.user (they can no longer rewrite the policy dev-role uses)</span></button>
+     <button class="opt radio" data-f="s3"><span class="box"></span><span>Remove <code>s3:GetObject</code> on dev-sandbox</span></button>
+     <button class="opt radio" data-f="logs"><span class="box"></span><span>Remove <code>logs:PutLogEvents</code></span></button>
+   </div>
+   ${feedbackBox()}<div class="btnrow" id="row"></div>`);
+  function paintOrder(){const c=$('#order');c.innerHTML='';
+    ord.forEach((item,idx)=>{const r=el('div','oitem');
+      r.innerHTML=`<span class="num">${idx+1}</span><span>${esc(item.t)}</span>
+        <span class="mv"><button data-u="${idx}" ${idx===0?'disabled style=opacity:.3':''}>▲</button>
+        <button data-dn="${idx}" ${idx===ord.length-1?'disabled style=opacity:.3':''}>▼</button></span>`;c.appendChild(r);});
+    c.querySelectorAll('[data-u]').forEach(b=>b.onclick=()=>{const i=+b.dataset.u;[ord[i-1],ord[i]]=[ord[i],ord[i-1]];paintOrder();});
+    c.querySelectorAll('[data-dn]').forEach(b=>b.onclick=()=>{const i=+b.dataset.dn;[ord[i+1],ord[i]]=[ord[i],ord[i+1]];paintOrder();});}
+  paintOrder();
+  let fix=null;bindRadio('#fix','f',f=>fix=f);
+  const row=$('#row');
+  row.appendChild(hintBtn(L,[
+    "The power isn't in assuming dev-role — it's in being able to rewrite what dev-role can do first.",
+    "Chain: rewrite the policy via CreatePolicyVersion → assume dev-role → that role is now admin. The order matters: you must escalate the policy before the assume-role gives you anything.",
+    "iam:CreatePolicyVersion (with SetDefaultPolicyVersion) is the escalation primitive. Removing it stops dev.user from turning a read-only role into admin. Dropping S3 or logs changes nothing about the path."
+  ]));
+  const sub=el('button','btn primary sp');sub.textContent='Confirm';sub.id='solveBtn';
+  sub.onclick=()=>{clearFb();
+    const orderOK=ord.map(o=>o.id).join(',')===CORRECT.join(',');
+    if(!orderOK){showFb('fail',`Order's off. dev.user must first rewrite the policy (CreatePolicyVersion), then assume dev-role, which is only then admin. Assuming the role before escalating the policy gets nothing.`);return;}
+    if(fix!=='policyver'){showFb('fail',`Chain order is right. But removing S3 or log permissions doesn't touch the path. Which permission lets dev.user rewrite the policy that dev-role depends on?`);return;}
+    solveLevel(L,`The primitive is iam:CreatePolicyVersion + SetDefaultPolicyVersion: dev.user rewrites dev-boundary to */*, then assumes dev-role and inherits admin. Strip those IAM-write actions from dev.user (and audit for any role whose policy a lower-priv principal can edit).`);};
+  row.appendChild(sub);
+}
+
+/* ===========================================================================
+   FINDING 5 — LEAKED KEY / CLOUDTRAIL
+   =========================================================================== */
+function renderL5(){
+  const L=LEVELS[4];
+  const ev=[
+    {t:'08:01',src:'52.1.4.9 us-east-1',key:'AKIA...CIBD',act:'s3:GetObject (ci-artifacts)',bad:false},
+    {t:'14:22',src:'77.91.x.x RU (new ASN)',key:'AKIA...CIBD',act:'sts:GetCallerIdentity',bad:true},
+    {t:'14:23',src:'77.91.x.x RU',key:'AKIA...CIBD',act:'iam:ListUsers, ec2:DescribeInstances, s3:ListAllMyBuckets',bad:true},
+    {t:'14:31',src:'77.91.x.x RU',key:'AKIA...CIBD',act:'s3:GetObject (prod-db-backups-4471)',bad:true},
+    {t:'14:40',src:'77.91.x.x RU',key:'AKIA...CIBD',act:'iam:CreateUser (svc-helper), iam:CreateAccessKey',bad:true},
+    {t:'15:02',src:'10.0.2.11 us-east-1',key:'AKIA...9QT2',act:'lambda:UpdateFunctionCode',bad:false},
+  ];
+  const body=ev.map((r,i)=>`<tr class="${r.bad?'':''}"><td class="c-m">${r.t}</td><td class="${r.bad?'c-r':'c-m'}">${esc(r.src)}</td>
+    <td class="c-b">${esc(r.key)}</td><td class="${r.bad?'c-a':'c-m'}" style="white-space:normal">${esc(r.act)}</td></tr>`).join('');
+  openOverlay(`${levelHeader(L)}
+   <p class="brief">GuardDuty flagged anomalous API calls. An access key committed to a public repo is being used. Read the CloudTrail, name the compromised key, mark the attacker's actions, and choose containment that cuts access without destroying the trail or breaking prod.</p>
+   <div class="sect-label">CloudTrail — prod-account 4471 (recent)</div>
+   <div class="tbl-wrap"><table class="log"><thead><tr><th>Time</th><th>Source</th><th>Access key</th><th>API calls</th></tr></thead><tbody>${body}</tbody></table></div>
+   <div class="field"><label>Compromised access key ID (as shown)</label><input id="key" placeholder="AKIA..." autocomplete="off"></div>
+   <div class="sect-label">Mark the attacker's activity (pick all that apply)</div>
+   <div class="opts" id="acts">
+     <button class="opt" data-a="recon"><span class="box"></span><span>14:22–14:23 — GetCallerIdentity + enumeration (IAM/EC2/S3) from a new Russian ASN</span></button>
+     <button class="opt" data-a="exfil"><span class="box"></span><span>14:31 — GetObject on prod-db-backups-4471 (PII exfil)</span></button>
+     <button class="opt" data-a="persist"><span class="box"></span><span>14:40 — CreateUser svc-helper + CreateAccessKey (backdoor persistence)</span></button>
+     <button class="opt" data-a="ci"><span class="box"></span><span>08:01 — GetObject on ci-artifacts from us-east-1 (normal CI usage)</span></button>
+     <button class="opt" data-a="lambda"><span class="box"></span><span>15:02 — UpdateFunctionCode from a different key in-region (normal deploy)</span></button>
+   </div>
+   <div class="sect-label">Immediate containment</div>
+   <div class="opts" id="fix">
+     <button class="opt radio" data-f="scoped"><span class="box"></span><span>Deactivate + delete the leaked key, delete the attacker-created svc-helper user and its key, revoke any sessions, then rotate the exposed backups and purge the key from the repo/history</span></button>
+     <button class="opt radio" data-f="nuke"><span class="box"></span><span>Delete the entire AWS account immediately</span></button>
+     <button class="opt radio" data-f="rotate"><span class="box"></span><span>Just rotate the one leaked key and move on</span></button>
+   </div>
+   ${feedbackBox()}<div class="btnrow" id="row"></div>`);
+  const acts=new Set();bindMulti('#acts',acts,'a');
+  let fix=null;bindRadio('#fix','f',f=>fix=f);
+  const row=$('#row');
+  row.appendChild(hintBtn(L,[
+    "One key appears both in normal in-region CI use and in a sudden burst from a foreign ASN running enumeration. Same key, two very different users.",
+    "AKIA...CIBD is the leaked key: recon (14:22–23) → PII exfil from prod-db-backups (14:31) → backdoor user svc-helper + new key (14:40). The 08:01 CI read and the 15:02 Lambda deploy are legit.",
+    "Rotating the leaked key alone leaves the attacker's svc-helper backdoor live. Deactivate/delete the key, delete svc-helper + its key, revoke sessions, rotate exposed data, and scrub the key from git history."
+  ]));
+  const sub=el('button','btn primary sp');sub.textContent='Confirm';sub.id='solveBtn';
+  sub.onclick=()=>{clearFb();
+    const k=$('#key').value.trim().toUpperCase().replace(/\s/g,'');
+    const keyOK=/CIBD/.test(k)&&k.startsWith('AKIA');
+    $('#key').className=keyOK?'ok':'bad';
+    const actsOK=acts.has('recon')&&acts.has('exfil')&&acts.has('persist')&&!acts.has('ci')&&!acts.has('lambda');
+    if(!keyOK){showFb('fail',`Name the key doing the damage — the one appearing in the foreign-ASN burst. Give it as shown (AKIA...CIBD).`);return;}
+    if(!actsOK){showFb('fail',`Key's right. Re-check the activity: the recon, the PII GetObject, and the CreateUser/CreateAccessKey are the attacker; the 08:01 CI read and 15:02 Lambda deploy are normal and from different context.`);return;}
+    if(fix!=='scoped'){showFb('fail',`Correct key and activity. But deleting the whole account is overkill and destroys the trail, and rotating only the leaked key leaves the svc-helper backdoor alive. Pick the scoped containment.`);return;}
+    solveLevel(L,`AKIA...CIBD (leaked to a public repo) ran recon → exfil'd prod-db-backups PII → planted backdoor user svc-helper with its own key. Deactivate/delete the key, delete svc-helper + key, revoke sessions, rotate exposed data, scrub git history. Keep CloudTrail intact.`);};
+  row.appendChild(sub);
+}
+
+/* ===========================================================================
+   FINDING 6 — BLAST RADIUS (capstone)
+   =========================================================================== */
+function renderL6(){
+  const L=LEVELS[5];
+  const chain=[
+    {id:'leak',t:'Access key AKIA...CIBD committed to a public GitHub repo'},
+    {id:'recon',t:'Key used from a foreign ASN: GetCallerIdentity + IAM/EC2/S3 enumeration'},
+    {id:'exfil',t:'GetObject on prod-db-backups-4471 — PII dumps exfiltrated'},
+    {id:'persist',t:'CreateUser svc-helper + CreateAccessKey — backdoor established'},
+    {id:'escalate',t:'svc-helper abuses iam:CreatePolicyVersion to grant itself * '},
+    {id:'cover',t:'cloudtrail:StopLogging attempted to blind detection'},
+  ];
+  const CORRECT=['leak','recon','exfil','persist','escalate','cover'];
+  let ord=[...chain].sort(()=>Math.random()-0.5);
+  openOverlay(`${levelHeader(L)}
+   <p class="brief">All five findings were one intrusion. Pull it together: order the attack, scope the real blast radius (identities and resources actually touched), and choose a containment plan that cuts the adversary and preserves evidence — without taking prod down for no reason.</p>
+   <div class="sect-label">Confirmed from Findings 1–5</div>
+   <div class="kv">
+     <span class="k">Entry: <b>leaked key AKIA...CIBD</b></span><span class="k">Exposed: <b>prod-db-backups-4471</b></span>
+     <span class="k">Backdoor: <b>svc-helper</b></span><span class="k">PrivEsc: <b>CreatePolicyVersion</b></span>
+     <span class="k">Gap: <b>legacy-auth MFA bypass</b></span>
+   </div>
+   <div class="sect-label">1 · Reconstruct the attack (earliest → latest)</div>
+   <div class="order" id="order"></div>
+   <div class="sect-label">2 · Scope — what's actually compromised? (pick all supported)</div>
+   <div class="opts" id="scope">
+     <button class="opt" data-s="key"><span class="box"></span><span>The leaked key AKIA...CIBD and the identity it belongs to</span></button>
+     <button class="opt" data-s="backdoor"><span class="box"></span><span>The attacker-created svc-helper user and its access key</span></button>
+     <button class="opt" data-s="bucket"><span class="box"></span><span>Data in prod-db-backups-4471 (exfiltrated)</span></button>
+     <button class="opt" data-s="allaccounts"><span class="box"></span><span>Every AWS account in the entire organization</span></button>
+     <button class="opt" data-s="onprem"><span class="box"></span><span>All on-prem domain controllers (no evidence links the cloud key to on-prem)</span></button>
+   </div>
+   <div class="sect-label">3 · Containment plan (pick all that apply)</div>
+   <div class="opts" id="contain">
+     <button class="opt" data-c="revoke"><span class="box"></span><span>Deactivate/delete the leaked key; delete svc-helper + its key; revoke active STS sessions</span></button>
+     <button class="opt" data-c="trail"><span class="box"></span><span>Re-enable and lock CloudTrail (SCP preventing StopLogging); preserve logs to a separate account</span></button>
+     <button class="opt" data-c="rotate"><span class="box"></span><span>Rotate the exposed backups/secrets and enable Block Public Access on the bucket</span></button>
+     <button class="opt" data-c="legacy"><span class="box"></span><span>Block legacy auth and enforce MFA/geo conditional access</span></button>
+     <button class="opt" data-c="nuke"><span class="box"></span><span>Immediately delete the production account and all workloads</span></button>
+     <button class="opt" data-c="ignore"><span class="box"></span><span>Leave CloudTrail disabled so the attacker thinks they won</span></button>
+   </div>
+   ${feedbackBox()}<div class="btnrow" id="row"></div>`);
+  function paintOrder(){const c=$('#order');c.innerHTML='';
+    ord.forEach((item,idx)=>{const r=el('div','oitem');
+      r.innerHTML=`<span class="num">${idx+1}</span><span>${esc(item.t)}</span>
+        <span class="mv"><button data-u="${idx}" ${idx===0?'disabled style=opacity:.3':''}>▲</button>
+        <button data-dn="${idx}" ${idx===ord.length-1?'disabled style=opacity:.3':''}>▼</button></span>`;c.appendChild(r);});
+    c.querySelectorAll('[data-u]').forEach(b=>b.onclick=()=>{const i=+b.dataset.u;[ord[i-1],ord[i]]=[ord[i],ord[i-1]];paintOrder();});
+    c.querySelectorAll('[data-dn]').forEach(b=>b.onclick=()=>{const i=+b.dataset.dn;[ord[i+1],ord[i]]=[ord[i],ord[i+1]];paintOrder();});}
+  paintOrder();
+  const scope=new Set(),contain=new Set();
+  bindMulti('#scope',scope,'s');bindMulti('#contain',contain,'c');
+  const row=$('#row');
+  row.appendChild(hintBtn(L,[
+    "The attack flows from the leaked key: recon → exfil → persistence → privilege escalation → anti-forensics last.",
+    "Scope only what evidence touched: the leaked key's identity, the svc-helper backdoor, and the exfiltrated bucket. 'Every account' and 'all on-prem DCs' have no supporting evidence.",
+    "Containment: revoke the key + backdoor, re-enable/lock CloudTrail, rotate exposed data + BPA the bucket, close the legacy-auth gap. Never nuke prod, never leave the trail off."
+  ]));
+  const sub=el('button','btn primary sp');sub.textContent='Close the incident';sub.id='solveBtn';
+  sub.onclick=()=>{clearFb();
+    const orderOK=ord.map(o=>o.id).join(',')===CORRECT.join(',');
+    const scopeOK=scope.has('key')&&scope.has('backdoor')&&scope.has('bucket')&&!scope.has('allaccounts')&&!scope.has('onprem');
+    const CW=['revoke','trail','rotate','legacy'];
+    const containOK=CW.every(k=>contain.has(k))&&!contain.has('nuke')&&!contain.has('ignore');
+    const probs=[];
+    if(!orderOK)probs.push('the attack order (leak → recon → exfil → persistence → privilege escalation → anti-forensics)');
+    if(!scopeOK)probs.push('the scope (only the leaked identity, svc-helper backdoor, and exfiltrated bucket are evidence-backed; "all accounts" and "on-prem DCs" are not)');
+    if(!containOK)probs.push('the containment set (revoke key+backdoor, lock CloudTrail, rotate+BPA the bucket, close legacy-auth — never nuke prod or leave the trail off)');
+    if(probs.length){showFb('fail',`Incident review bounced it back. Fix: <b>${probs.join('</b>; <b>')}</b>.`);return;}
+    running=false;save();
+    solveLevel(L,`Attack reconstructed end to end, blast radius scoped to the identities and bucket actually touched, containment cuts the key and backdoor while preserving the trail and keeping prod up. Posture restored.`);};
+  row.appendChild(sub);
+}
+
+/* ===== summary / title ===== */
+function showSummary(){
+  const n=S.solved.filter(Boolean).length;
+  const rows=LEVELS.map(L=>`<tr><td class="n">${L.id+1}</td><td class="t">${esc(L.name)}</td>
+    <td class="d">${S.solved[L.id]?'<span class="c-g">✓ resolved</span>':'<span class="c-m">open</span>'}</td></tr>`).join('');
+  openOverlay(`<div class="card pad"><div class="title-wrap" style="padding-top:2vh">
+    <span class="eyebrow">Incident Summary</span>
+    <h1>${n>=6?'POSTURE <span>SECURED</span>':'SHIFT ENDED'}</h1>
+    <p class="tag">${n>=6?'One leaked key became a full account compromise — and you walked it back: scoped the blast radius, cut the backdoor, kept the logs, left prod running. Clean close.':'You logged off with findings still open. The posture stays at risk.'}</p>
+    <div class="kv" style="justify-content:center;margin-top:16px">
+      <span class="k">Findings <b>${n}/6</b></span><span class="k">Score <b>${S.score}</b></span><span class="k">Time <b>${fmt(S.elapsed)}</b></span></div>
+    <table class="ttable">${rows}</table></div>
+    <div class="btnrow"><button class="btn sp" onclick="closeOverlay()">← Back to floor</button>
+    <button class="btn primary" onclick="resetGame()">Reset &amp; replay</button></div></div>`);
+}
+function resetGame(){S={solved:[false,false,false,false,false,false],score:0,hints:{},elapsed:0,started:false};
+  save();t0=performance.now();running=false;refreshHUD();closeOverlay();player.x=W/2;player.y=300;showTitle();}
+window.resetGame=resetGame;
+function showTitle(){
+  const resume=S.solved.some(Boolean);
+  const rows=LEVELS.map(L=>`<tr><td class="n">${L.id+1}</td><td class="t">${esc(L.name)}</td>
+    <td class="d">${'◆'.repeat(Math.min(L.diff,6))} ${esc(L.dname)}</td></tr>`).join('');
+  openOverlay(`<div class="card pad"><div class="title-wrap">
+    <span class="eyebrow">A cloud & identity puzzle</span>
+    <h1>BLAST <span>RADIUS</span></h1>
+    <p class="tag">A single access key got committed to a public repo, and the cloud account is on fire. Work the findings: lock the exposed bucket, cut the wildcard policies, close the MFA gap, trace the privilege-escalation path, read the CloudTrail — then contain the whole intrusion without nuking production.</p>
+    <table class="ttable">${rows}</table>
+    <p class="legal">Six findings, roughly 60–90 minutes, each harder than the last. Pure defensive cloud security — misconfig, identity, detection, response. Move with <kbd>WASD</kbd>/<kbd>arrows</kbd>, open a console with <kbd>E</kbd>/<kbd>Enter</kbd> (or the on-screen pad). Hints cost points.</p></div>
+    <div class="btnrow" style="justify-content:center">
+      <button class="btn primary" id="startBtn">${resume?'Resume response →':'Start triage →'}</button>
+      ${resume?'<button class="btn" onclick="resetGame()">Start over</button>':''}</div></div>`);
+  $('#startBtn').onclick=()=>{running=true;S.started=true;save();closeOverlay();};
+}
+try{
+  const boot=async(data)=>{
+    if(academyEmbedded){
+      openOverlay('<div class="card pad"><p class="eyebrow">SAVED PROGRESS</p><h2>Loading your progress</h2><p>Your saved progress is loading from the Academy.</p></div>');
+      if(!await loadAcademyProgress()){
+        openOverlay('<div class="card pad"><p class="eyebrow">SAVED PROGRESS</p><h2>Could not load your progress</h2><p>Keep the game open and check your connection. Your saved progress has not been replaced.</p><button class="btn primary" id="retryAcademyProgress">Retry</button></div>');
+        $('#retryAcademyProgress').onclick=()=>boot(data);return;
+      }
+    }else if(data&&data.S){S=Object.assign(S,data.S);}
+    t0=performance.now()-(S.elapsed||0)*1000;
+    refreshHUD();fit();loop();if(S.started)running=true;else showTitle();
+    if(window.claude&&window.claude.hot&&window.claude.hot.snapshot)window.claude.hot.snapshot(()=>({S}));
+  };
+  if(window.claude&&window.claude.hot&&window.claude.hot.ready)window.claude.hot.ready(boot);
+  else boot((window.claude&&window.claude.hot&&window.claude.hot.data)||{});
+}catch(e){refreshHUD();fit();loop();showTitle();}
+</script>

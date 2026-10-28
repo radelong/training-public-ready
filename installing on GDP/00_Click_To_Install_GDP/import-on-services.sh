@@ -40,7 +40,7 @@ with tarfile.open(archive_path, 'r:gz') as archive:
 PY
 cp -- "$content/CONTENT-SHA256SUMS.txt" "$content/academy-fresh-courses.tar.gz" \
   "$content/academy-assessments-bank.json" \
-  "$content/Packet_Loss.html" "$scratch/extras/"
+  "$content/academy-games-20261028.tar.gz" "$scratch/extras/"
 cp -- "$incoming/fresh-labs.json" "$scratch/fresh-labs.json"
 chown -R 10001:10001 "$scratch"
 chmod 700 "$scratch" "$scratch/courses" "$scratch/extras" "$scratch/courses/slides"
@@ -73,7 +73,7 @@ with factory() as db:
     assert count(User) == 1 and db.scalar(select(User.role)) == 'admin'
     assert count(Course) == 8
     assert count(AcademyAssessmentQuestion) == 160
-    assert count(LearningGame) == 1
+    assert count(LearningGame) == 6
     assert {lab.id for lab in db.scalars(select(Lab))} == {
         'netlab', 'linux', 'callback-troubleshooting'}
     for model in (AcademyAssessmentAttempt, BugReport, ExamAttempt, LabSession,
@@ -83,4 +83,4 @@ with factory() as db:
 print('FRESH_INSTALL_CONTENT_VERIFIED')
 engine.dispose()
 PY
-echo 'Eight classes, two 80-question assessments, Packet Loss and three labs imported.'
+echo 'Eight classes, two 80-question assessments, six games and three labs imported.'

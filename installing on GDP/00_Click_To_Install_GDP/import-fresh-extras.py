@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""Load protected assessment bank and Packet Loss on a new, empty Academy."""
+"""Load the assessment banks and game catalog on a new, empty Academy."""
 
 import argparse
 import hashlib
+import io
 import json
+import re
 import sys
+import tarfile
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -14,7 +17,7 @@ if Path("/app/academy").is_dir():
 from sqlalchemy import func, select
 from academy.config import Settings
 from academy.db import (AcademyAssessmentQuestion, Audit, Course, LearningGame,
-                        User, allocation_lock, database, uid)
+                        User, allocation_lock, database)
 from academy.learning import AcademyAssessmentBankWrite, normalized_question_prompt
 
 
@@ -25,6 +28,46 @@ class HtmlDocument(HTMLParser):
 
     def handle_starttag(self, tag, attrs):
         self.has_html |= tag.casefold() == "html"
+
+
+def read_games(payload):
+    """Validate the catalog and each HTML member without extracting paths."""
+    with tarfile.open(fileobj=io.BytesIO(payload), mode="r:gz") as archive:
+        members = archive.getmembers()
+        names = [member.name for member in members]
+        if len(names) != len(set(names)) or any(not member.isfile() for member in members):
+            raise ValueError("Invalid game archive members")
+        if "games.json" not in names or archive.getmember("games.json").size > 100000:
+            raise ValueError("Invalid game catalog")
+        games = json.load(archive.extractfile("games.json"))
+        if not isinstance(games, list) or len(games) != 6:
+            raise ValueError("Expected six games")
+        files = {}
+        for game in games:
+            if not isinstance(game, dict) or set(game) != {"id", "title", "description", "category", "filename", "size", "sha256"}:
+                raise ValueError("Invalid game metadata fields")
+            game_id = game.get("id", "")
+            if not re.fullmatch(r"[0-9a-f]{32}", game_id) or game_id in files:
+                raise ValueError("Invalid or duplicate game ID")
+            for field, limit in (("title", 120), ("description", 10000), ("category", 32), ("filename", 180)):
+                if not isinstance(game.get(field), str) or len(game[field]) > limit:
+                    raise ValueError("Invalid game metadata: " + field)
+            name = "games/" + game_id + ".html"
+            member = archive.getmember(name)
+            if member.size > 5 * 1024 * 1024:
+                raise ValueError("Game exceeds the Academy size limit")
+            html = archive.extractfile(member).read()
+            if len(html) != game.get("size") or hashlib.sha256(html).hexdigest() != game.get("sha256"):
+                raise ValueError("Game asset checksum mismatch")
+            document = HtmlDocument()
+            document.feed(html.decode("utf-8-sig"))
+            document.close()
+            if not document.has_html:
+                raise ValueError("Game is not a complete HTML document")
+            files[game_id] = html
+        if set(names) != {"games.json", *("games/" + game_id + ".html" for game_id in files)}:
+            raise ValueError("Unexpected game archive members")
+        return games, files
 
 
 def main():
@@ -43,17 +86,10 @@ def main():
             raise ValueError(f"Checksum failed: {name}")
         expected[name] = data
     if set(expected) != {"academy-fresh-courses.tar.gz", "academy-assessments-bank.json",
-                         "Packet_Loss.html"}:
+                         "academy-games-20261028.tar.gz"}:
         raise ValueError("Fresh content set is incomplete")
     bank = AcademyAssessmentBankWrite.model_validate_json(expected["academy-assessments-bank.json"])
-    html = expected["Packet_Loss.html"]
-    if len(html) > 5 * 1024 * 1024:
-        raise ValueError("Packet Loss HTML exceeds the Academy game limit")
-    document = HtmlDocument()
-    document.feed(html.decode("utf-8-sig"))
-    document.close()
-    if not document.has_html:
-        raise ValueError("Packet Loss is not a complete HTML document")
+    games, game_files = read_games(expected["academy-games-20261028.tar.gz"])
     counts = {kind: sum(question.kind == kind for question in bank.questions)
               for kind in ("overall", "graduation")}
     if counts != {"overall": 80, "graduation": 80}:
@@ -65,7 +101,7 @@ def main():
 
     settings = Settings()
     engine, factory = database(settings.database_url)
-    game_path = None
+    created_paths = []
     try:
         with factory() as db:
             allocation_lock(db)
@@ -89,7 +125,7 @@ def main():
                         class_prompts.add(normalized_question_prompt(question["prompt"]))
             if class_prompts.intersection(prompts):
                 raise ValueError("Assessment bank repeats a class question")
-            print("VALIDATED 8 classes, 80 Overall questions, 80 Graduation questions, Packet Loss HTML")
+            print("VALIDATED 8 classes, 80 Overall questions, 80 Graduation questions, and 6 games")
             if not args.apply:
                 print("DRY RUN ONLY; nothing changed")
                 return
@@ -102,21 +138,20 @@ def main():
                     choice_explanations_json=json.dumps(question.choice_explanations),
                     course_categories_json=json.dumps(question.course_categories),
                     lab_kinds_json=json.dumps(question.lab_kinds), topics_json=json.dumps(question.topics)))
-            game_id = uid()
-            game_path = Path(settings.content_dir) / "games" / f"{game_id}.html"
-            game_path.parent.mkdir(parents=True, exist_ok=True)
-            with game_path.open("xb") as output:
-                output.write(html)
-            game_path.chmod(0o640)
-            db.add(LearningGame(id=game_id, title="Packet Loss", category="Networking",
-                                description="Practice packet-path troubleshooting in an interactive browser game.",
-                                filename="Packet_Loss.html", size=len(html),
-                                sha256=hashlib.sha256(html).hexdigest(), created_by=users[0].id))
-            db.add(Audit(user_id=users[0].id, action="import_fresh_content", target=game_id))
+            for game in games:
+                game_id = game["id"]
+                game_path = Path(settings.content_dir) / "games" / f"{game_id}.html"
+                game_path.parent.mkdir(parents=True, exist_ok=True)
+                with game_path.open("xb") as output:
+                    created_paths.append(game_path)
+                    output.write(game_files[game_id])
+                game_path.chmod(0o640)
+                db.add(LearningGame(**game, created_by=users[0].id))
+            db.add(Audit(user_id=users[0].id, action="import_fresh_content", target="academy"))
             db.commit()
-            print("PUBLISHED assessment banks and Packet Loss game")
+            print("PUBLISHED assessment banks and 6 games")
     except BaseException:
-        if game_path is not None:
+        for game_path in created_paths:
             game_path.unlink(missing_ok=True)
         raise
     finally:

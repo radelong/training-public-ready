@@ -1,4 +1,11 @@
 .qa/
+staging/private/
+/installing on GDP/28_Fresh_Install_Content/
+/installing on GDP/29_Current_Lab_Templates/
+/installing on GDP/30_Current_Offline_Media_2026-10-26/
+/installing on GDP/31_Module_Knowledge_Checks_Production_Update/
+/installing on GDP/32_Module_Knowledge_Checks_R2/*.tar.gz*
+/installing on GDP/33_Learning_Fixes_R3/*.tar.gz*
 __pycache__/
 *.pyc
 *.db

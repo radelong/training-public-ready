@@ -6,6 +6,8 @@ installer_dir="$(realpath "${2:?Usage: install-on-proxmox.sh MEDIA_DIRECTORY INS
 package_dir="$(dirname "$installer_dir")"
 content_dir="$package_dir/28_Fresh_Install_Content"
 templates_dir="$package_dir/29_Current_Lab_Templates"
+update_dir="$package_dir/33_Learning_Fixes_R3"
+update_name=Training_Academy_App_Update_28_Learning_Fixes_2026-10-27_r3.tar.gz
 archive="$media_dir/training-academy-offline-amd64.tar.gz"
 provision_iso="$media_dir/academy-provision.iso"
 
@@ -21,10 +23,12 @@ pveversion | grep -Eq 'pve-manager/(9|[1-9][0-9])\.' || die 'This installer requ
 [[ -f "$templates_dir/backups/academy-template-sha256sums.txt" ]] || die 'Lab template backups are missing.'
 [[ -f "$templates_dir/fresh-labs.json" ]] || die 'Fresh lab catalog is missing.'
 [[ -f "$installer_dir/import-on-services.sh" ]] || die 'Services import script is missing.'
+[[ -f "$update_dir/$update_name" && -f "$update_dir/$update_name.sha256" ]] || die 'The current Academy application update is missing.'
 
 (cd "$media_dir" && sha256sum --check training-academy-offline-amd64.tar.gz.sha256 academy-provision.iso.sha256) || die 'Media checksum verification failed.'
 (cd "$content_dir" && sha256sum --check CONTENT-SHA256SUMS.txt) || die 'Protected content checksum verification failed.'
 (cd "$templates_dir/backups" && sha256sum --check academy-template-sha256sums.txt) || die 'Lab template checksum verification failed.'
+(cd "$update_dir" && sha256sum --check "$update_name.sha256") || die 'Academy application update checksum verification failed.'
 test -c /dev/kvm && grep -Eq '(vmx|svm)' /proc/cpuinfo || die 'Nested KVM CPU features are not available.'
 vm_listing="$(qm list)"
 if grep -Eq '^[[:space:]]*[0-9]+[[:space:]]' <<< "$vm_listing"; then
@@ -48,7 +52,7 @@ python3 "$installer_dir/configure-site.py" "$media_root/deploy/site.example.json
 
 printf '\nThis will create private bridges, a restricted Proxmox service account, the Academy services VM, and restore four lab templates.\n'
 printf 'The services VM runs both the website frontend and application backend.\n'
-printf 'It will import eight classes, two 80-question assessments, Packet Loss, and three labs with fresh users and results.\n'
+printf 'It will import eight classes, two 80-question assessments, six games, and three labs with fresh users and results.\n'
 printf 'No existing VM or disk image will be modified.\n\n'
 
 ACADEMY_CURRENT_TEMPLATES=1 bash "$media_root/scripts/bootstrap-proxmox.sh" "$media_root" /root/gdp-site.json "$provision_iso"
@@ -75,6 +79,10 @@ for attempt in {1..12}; do
   sleep 5
 done
 ssh "${ssh_options[@]}" "learner@$guest_ip" 'mkdir -m 700 /tmp/academy-fresh-import'
+scp "${ssh_options[@]}" "$update_dir/$update_name" "$update_dir/$update_name.sha256" \
+  "learner@$guest_ip:/tmp/academy-fresh-import/"
+ssh "${ssh_options[@]}" "learner@$guest_ip" \
+  "cd /tmp/academy-fresh-import && sha256sum --check '$update_name.sha256' && mkdir app-update && tar -xzf '$update_name' -C app-update && sudo bash app-update/academy-update/scripts/install-app-update.sh /tmp/academy-fresh-import/app-update/academy-update"
 scp "${ssh_options[@]}" -r -p "$content_dir" \
   "$templates_dir/fresh-labs.json" \
   "$installer_dir/import-classes.py" \

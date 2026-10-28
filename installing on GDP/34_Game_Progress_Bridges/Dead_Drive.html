@@ -1,0 +1,767 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dead Drive</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: top-down forensic lab (canvas hub) with DOM puzzle overlays stacked above it.
+   Single committed dark "evidence-room-at-2am" world — intentionally single-theme. */
+:root{
+  --bg:#070a0f;
+  --floor:#0c1119;
+  --panel:#101722;
+  --panel-2:#0a0f17;
+  --edge:#1d2838;
+  --fg:#cdd8e6;
+  --muted:#6a7a8f;
+  --dim:#45566b;
+  --accent:#4fd4e0;        /* forensic ice/cyan */
+  --accent-dim:#1a5a63;
+  --amber:#f2b23e;         /* evidence tag */
+  --red:#ff5d5d;
+  --blue:#56a8ff;
+  --violet:#b48cff;
+  --good:#4fd4e0;
+  --warn:#f2b23e;
+  --crit:#ff5d5d;
+  color-scheme:dark;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --sans:"IBM Plex Sans",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--sans);font-size:15px;line-height:1.5;overflow:hidden;-webkit-text-size-adjust:100%}
+h1,h2,h3{font-family:var(--mono);text-wrap:balance;margin:0}
+code,kbd,.mono{font-family:var(--mono)}
+kbd{background:var(--panel);border:1px solid var(--edge);border-bottom-width:2px;border-radius:4px;padding:1px 6px;font-size:.82em;color:var(--fg)}
+button{font-family:var(--sans);cursor:pointer}
+::selection{background:var(--accent-dim);color:#eafeff}
+#app{position:fixed;inset:0;display:flex;flex-direction:column;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+#hud{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px max(14px,env(safe-area-inset-left,0px));padding-right:max(14px,env(safe-area-inset-right,0px));background:linear-gradient(180deg,#0b121d,#090e17);border-bottom:1px solid var(--edge);font-family:var(--mono);font-size:12.5px;min-height:46px;z-index:5}
+#hud .brand{color:var(--accent);font-weight:600;letter-spacing:.06em}
+#hud .brand b{color:var(--fg)}
+#hud .sp{flex:1}
+#hud .stat{color:var(--muted)}
+#hud .stat b{color:var(--fg);font-variant-numeric:tabular-nums}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--amber);box-shadow:0 0 8px var(--amber);margin-right:5px;vertical-align:middle;animation:pulse 2s infinite}
+@keyframes pulse{50%{opacity:.35}}
+@media (prefers-reduced-motion:reduce){.dot{animation:none}}
+#stage{flex:1;position:relative;overflow:hidden;background:radial-gradient(120% 90% at 50% -10%,#0e1826 0%,#070a0f 60%)}
+#game{position:absolute;inset:0;margin:auto;display:block;touch-action:none}
+#prompt{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);background:rgba(9,14,23,.9);border:1px solid var(--edge);border-radius:10px;padding:9px 15px;font-family:var(--mono);font-size:13px;color:var(--fg);display:none;align-items:center;gap:10px;max-width:92%;z-index:4;backdrop-filter:blur(4px)}
+#prompt .k{color:var(--accent)}
+#prompt.show{display:flex}
+#touch{position:absolute;inset:auto 0 0 0;display:none;justify-content:space-between;align-items:flex-end;padding:0 max(16px,env(safe-area-inset-left,0px)) 16px;z-index:4;pointer-events:none}
+#touch>*{pointer-events:auto}
+.dpad{display:grid;grid-template-columns:repeat(3,52px);grid-template-rows:repeat(3,52px);gap:5px;opacity:.85}
+.dpad button{border:1px solid var(--edge);background:rgba(16,23,34,.85);color:var(--accent);border-radius:10px;font-size:20px;line-height:1;display:flex;align-items:center;justify-content:center}
+.dpad button:active{background:var(--accent-dim);color:#fff}
+.dpad .nd{visibility:hidden}
+#actBtn{width:70px;height:70px;border-radius:50%;border:2px solid var(--accent-dim);background:rgba(16,23,34,.9);color:var(--accent);font-family:var(--mono);font-weight:600;font-size:15px;align-self:flex-end}
+#actBtn:active{background:var(--accent-dim);color:#fff}
+.overlay{position:absolute;inset:0;z-index:20;display:none;background:rgba(4,7,11,.74);backdrop-filter:blur(3px);overflow-y:auto;-webkit-overflow-scrolling:touch}
+.overlay.show{display:block}
+.sheet{max-width:860px;margin:0 auto;min-height:100%;padding:20px max(16px,env(safe-area-inset-left,0px)) 40px;padding-right:max(16px,env(safe-area-inset-right,0px))}
+.card{background:var(--panel);border:1px solid var(--edge);border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.card.pad{padding:22px}
+@media(max-width:520px){.card.pad{padding:16px}}
+.pz-top{display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+.pz-top .lvlno{font-family:var(--mono);color:#04181a;background:var(--accent);font-weight:700;border-radius:7px;padding:3px 9px;font-size:13px}
+.pz-top h2{font-size:19px;flex:1;min-width:140px}
+.diff{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;padding:3px 8px;border-radius:20px;border:1px solid currentColor}
+.diff.d1{color:var(--good)}.diff.d2{color:#7fd9c0}.diff.d3{color:var(--amber)}.diff.d4{color:#ff9f45}.diff.d5{color:var(--red)}.diff.d6{color:var(--violet)}
+.x{margin-left:auto;background:transparent;border:1px solid var(--edge);color:var(--muted);border-radius:8px;width:34px;height:34px;font-size:18px;line-height:1}
+.x:hover{color:var(--fg);border-color:var(--muted)}
+.brief{color:var(--muted);font-size:14px;margin:0 0 16px;border-left:2px solid var(--accent-dim);padding-left:12px}
+.brief b{color:var(--fg)}
+.sect-label{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);margin:18px 0 8px}
+.term{background:var(--panel-2);border:1px solid var(--edge);border-radius:10px;overflow:hidden;margin:4px 0}
+.term-bar{display:flex;align-items:center;gap:7px;padding:7px 11px;background:#090e16;border-bottom:1px solid var(--edge);font-family:var(--mono);font-size:11.5px;color:var(--muted)}
+.term-bar .tl{display:flex;gap:5px}.term-bar .tl i{width:10px;height:10px;border-radius:50%;display:block}
+.term-bar .tl i:nth-child(1){background:#ff5f56}.term-bar .tl i:nth-child(2){background:#ffbd2e}.term-bar .tl i:nth-child(3){background:#27c93f}
+.term-body{padding:12px;font-family:var(--mono);font-size:12.5px;overflow-x:auto;line-height:1.65}
+.term-body.sm{font-size:11.5px}
+.c-g{color:var(--accent)}.c-a{color:var(--amber)}.c-r{color:var(--red)}.c-b{color:var(--blue)}.c-m{color:var(--muted)}.c-v{color:var(--violet)}
+.clue{cursor:pointer;border-bottom:1px dashed var(--dim);transition:background .12s}
+.clue:hover{background:rgba(242,178,62,.12)}
+.clue.found{background:rgba(79,212,224,.2);border-bottom:1px solid var(--accent);color:#eafeff}
+.clue.wrong{animation:shake .3s}
+@keyframes shake{25%{transform:translateX(-3px)}75%{transform:translateX(3px)}}
+.tbl-wrap{overflow-x:auto;border:1px solid var(--edge);border-radius:10px}
+table.log{border-collapse:collapse;width:100%;font-family:var(--mono);font-size:12px;min-width:460px}
+table.log th{position:sticky;top:0;background:#090e16;color:var(--muted);text-align:left;padding:7px 10px;border-bottom:1px solid var(--edge);font-weight:600;white-space:nowrap}
+table.log td{padding:6px 10px;border-bottom:1px solid #121a26;white-space:nowrap}
+table.log tr:hover td{background:#0d1420}
+.pill{font-family:var(--mono);font-size:10.5px;padding:1px 7px;border-radius:12px;font-weight:600}
+.pill.ok{background:rgba(79,212,224,.16);color:var(--good)}
+.pill.fail{background:rgba(255,93,93,.16);color:var(--red)}
+.pill.warn{background:rgba(242,178,62,.16);color:var(--amber)}
+.opts{display:flex;flex-direction:column;gap:9px;margin:6px 0}
+.opt{display:flex;gap:11px;align-items:flex-start;padding:11px 13px;border:1px solid var(--edge);border-radius:10px;background:var(--panel-2);text-align:left;color:var(--fg);font-size:13.5px;width:100%}
+.opt:hover{border-color:var(--muted)}
+.opt.sel{border-color:var(--accent);background:rgba(79,212,224,.1)}
+.opt .box{width:18px;height:18px;border:1px solid var(--dim);border-radius:5px;flex:none;margin-top:1px;display:flex;align-items:center;justify-content:center;font-size:12px;color:#04181a}
+.opt.sel .box{background:var(--accent);border-color:var(--accent)}
+.opt.radio .box{border-radius:50%}
+.opt .tag{font-family:var(--mono);font-size:10.5px;color:var(--dim);display:block;margin-top:3px}
+.field{display:flex;flex-direction:column;gap:5px;margin:10px 0}
+.field label{font-family:var(--mono);font-size:11.5px;color:var(--muted);letter-spacing:.04em}
+.field input{background:var(--panel-2);border:1px solid var(--edge);border-radius:9px;padding:11px 13px;color:var(--fg);font-family:var(--mono);font-size:14px}
+.field input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(79,212,224,.14)}
+.field input.ok{border-color:var(--good)}.field input.bad{border-color:var(--red)}
+.order{display:flex;flex-direction:column;gap:7px}
+.oitem{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--edge);border-radius:9px;background:var(--panel-2);font-size:13px}
+.oitem .num{font-family:var(--mono);width:22px;height:22px;border-radius:6px;background:var(--edge);color:var(--fg);display:flex;align-items:center;justify-content:center;font-size:12px;flex:none}
+.oitem .mv{margin-left:auto;display:flex;gap:4px}
+.oitem .mv button{width:28px;height:28px;border-radius:6px;border:1px solid var(--edge);background:transparent;color:var(--muted);font-size:13px}
+.oitem .mv button:hover{color:var(--fg);border-color:var(--muted)}
+.btnrow{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px;align-items:center}
+.btn{border:1px solid var(--edge);background:var(--panel-2);color:var(--fg);padding:11px 18px;border-radius:10px;font-size:14px;font-weight:600;font-family:var(--mono)}
+.btn:hover{border-color:var(--muted)}
+.btn.primary{background:var(--accent);color:#04181a;border-color:var(--accent)}
+.btn.primary:hover{background:#6ee4ee}
+.btn.primary:disabled{background:var(--accent-dim);color:#06222488;opacity:.6;cursor:not-allowed}
+.btn.ghost{background:transparent;color:var(--muted)}
+.btn.sp{margin-left:auto}
+.fb{margin-top:16px;border-radius:10px;padding:13px 15px;font-size:13.5px;display:none;border:1px solid}
+.fb.show{display:block}
+.fb.pass{background:rgba(79,212,224,.1);border-color:var(--accent-dim);color:#c4f6fb}
+.fb.fail{background:rgba(255,93,93,.08);border-color:#5a2730;color:#ffc6c6}
+.fb.hint{background:rgba(242,178,62,.08);border-color:#5a4620;color:#f4d79a}
+.fb b{color:#fff}
+.fb .mitre{font-family:var(--mono);font-size:11.5px;color:var(--muted);margin-top:8px;display:block}
+.title-wrap{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:6px;padding-top:4vh}
+.title-wrap .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.3em;color:var(--accent);text-transform:uppercase}
+.title-wrap h1{font-size:clamp(34px,9vw,60px);letter-spacing:-.01em;line-height:.95;margin:4px 0}
+.title-wrap h1 span{color:var(--accent)}
+.title-wrap .tag{color:var(--muted);max-width:52ch;margin:6px auto 0;font-size:15px}
+.ttable{width:100%;margin-top:22px;border-collapse:collapse;font-family:var(--mono);font-size:12.5px}
+.ttable td{padding:9px 10px;border-bottom:1px solid var(--edge);text-align:left}
+.ttable .n{color:var(--accent);width:26px}.ttable .t{color:var(--fg)}.ttable .d{color:var(--dim);text-align:right;white-space:nowrap}
+.legal{color:var(--dim);font-size:12px;margin-top:20px;max-width:60ch}
+#missions{position:absolute;top:50px;right:max(10px,env(safe-area-inset-right,0px));z-index:21;width:min(330px,calc(100vw - 20px));display:none}
+#missions.show{display:block}
+.mrow{display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--edge);font-size:13px}
+.mrow:last-child{border-bottom:none}
+.mrow .st{width:20px;height:20px;border-radius:6px;flex:none;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:11px;font-weight:700}
+.mrow .st.done{background:var(--accent);color:#04181a}
+.mrow .st.open{background:var(--panel-2);border:1px solid var(--edge);color:var(--muted)}
+.mrow .st.lock{background:transparent;border:1px dashed var(--dim);color:var(--dim)}
+.mrow .nm{flex:1}.mrow .nm small{display:block;color:var(--dim);font-family:var(--mono);font-size:10.5px}
+.mrow.locked{opacity:.5}
+.kv{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
+.kv .k{font-family:var(--mono);font-size:11px;background:var(--panel-2);border:1px solid var(--edge);border-radius:6px;padding:4px 9px;color:var(--muted)}
+.kv .k b{color:var(--fg)}
+.note{font-size:12.5px;color:var(--muted);margin-top:10px}
+a{color:var(--blue)}
+.hexref{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:6px;font-family:var(--mono);font-size:11.5px}
+.hexref div{background:var(--panel-2);border:1px solid var(--edge);border-radius:7px;padding:7px 10px}
+.hexref b{color:var(--accent)}
+</style>
+
+<div id="app">
+  <div id="hud">
+    <span class="brand"><b>DEAD</b> DRIVE</span>
+    <span class="stat"><span class="dot"></span>EVIDENCE <b id="threatcon">6</b></span>
+    <span class="sp"></span>
+    <span class="stat">CASES <b><span id="solvedN">0</span>/6</b></span>
+    <span class="stat">SCORE <b id="scoreN">0</b></span>
+    <span class="stat">TIME <b id="clock">00:00</b></span>
+    <button class="btn ghost" id="missBtn" style="padding:6px 12px;font-size:12px">EVIDENCE ▾</button>
+  </div>
+  <div id="stage">
+    <canvas id="game"></canvas>
+    <div id="prompt"></div>
+    <div id="touch">
+      <div class="dpad"><button class="nd"></button><button data-d="up">▲</button><button class="nd"></button>
+      <button data-d="left">◀</button><button class="nd"></button><button data-d="right">▶</button>
+      <button class="nd"></button><button data-d="down">▼</button><button class="nd"></button></div>
+      <button id="actBtn">EXAMINE</button>
+    </div>
+  </div>
+  <div class="card" id="missions"></div>
+  <div class="overlay" id="overlay"><div class="sheet" id="sheet"></div></div>
+</div>
+
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+const el = (t,c,h)=>{const e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e;};
+const esc = s => String(s).replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));
+
+const SAVE_KEY="dead-drive-v1";
+let S={solved:[false,false,false,false,false,false],score:0,hints:{},elapsed:0,started:false};
+const ACADEMY_PROGRESS_CHANNEL="academy-game-progress-v1";
+const academyEmbedded=window.parent!==window;
+let academyProgressReady=!academyEmbedded;
+function restoreSavedState(raw){
+  try{
+    const saved=JSON.parse(raw);
+    if(!saved||!Array.isArray(saved.solved)||saved.solved.length!==6||saved.solved.some(value=>typeof value!=="boolean")||
+       !Number.isFinite(saved.score)||saved.score<0||!saved.hints||typeof saved.hints!=="object"||Array.isArray(saved.hints)||
+       !Number.isFinite(saved.elapsed)||saved.elapsed<0||typeof saved.started!=="boolean")return false;
+    if(Object.entries(saved.hints).some(([id,count])=>!/^\d$/.test(id)||Number(id)>5||!Number.isInteger(count)||count<0))return false;
+    S={solved:[...saved.solved],score:saved.score,hints:{...saved.hints},elapsed:saved.elapsed,started:saved.started};
+    return true;
+  }catch(e){return false;}
+}
+function loadAcademyProgress(){
+  return new Promise(resolve=>{
+    let settled=false;
+    const finish=loaded=>{if(settled)return;settled=true;clearTimeout(timer);window.removeEventListener("message",receive);academyProgressReady=loaded;resolve(loaded);};
+    const receive=event=>{const message=event.data;if(event.source!==window.parent||!message||message.channel!==ACADEMY_PROGRESS_CHANNEL)return;
+      if(message.type==="failed"){finish(false);return;}
+      if(message.type==="loaded")finish(message.state===null||(typeof message.state==="string"&&restoreSavedState(message.state)));
+    };
+    const timer=setTimeout(()=>finish(false),10000);
+    window.addEventListener("message",receive);
+    window.parent.postMessage({channel:ACADEMY_PROGRESS_CHANNEL,type:"load"},"*");
+  });
+}
+function loadLocalProgress(){try{const raw=localStorage.getItem(SAVE_KEY);if(raw)restoreSavedState(raw);}catch(e){}}
+function save(){
+  if(academyEmbedded){if(academyProgressReady)window.parent.postMessage({channel:ACADEMY_PROGRESS_CHANNEL,type:"save",state:JSON.stringify(S)},"*");return;}
+  try{localStorage.setItem(SAVE_KEY,JSON.stringify(S));}catch(e){}
+}
+if(academyEmbedded){
+  window.addEventListener("message",event=>{const message=event.data;
+    if(!academyProgressReady||event.source!==window.parent||!message||message.channel!==ACADEMY_PROGRESS_CHANNEL||message.type!=="flush"||typeof message.requestId!=="string")return;
+    tick();save();window.parent.postMessage({channel:ACADEMY_PROGRESS_CHANNEL,type:"flushed",requestId:message.requestId},"*");
+  });
+}else loadLocalProgress();
+let t0=performance.now()-(S.elapsed||0)*1000, running=false;
+function fmt(sec){const m=Math.floor(sec/60),s=Math.floor(sec%60);return String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');}
+function tick(){if(running){S.elapsed=(performance.now()-t0)/1000;$('#clock').textContent=fmt(S.elapsed);}}
+setInterval(()=>{tick();if(running&&Math.floor(S.elapsed)%5===0)save();},1000);
+function refreshHUD(){const n=S.solved.filter(Boolean).length;$('#solvedN').textContent=n;$('#scoreN').textContent=S.score;$('#threatcon').textContent=6-Math.min(6,n);renderMissions();}
+
+const LEVELS=[
+ {id:0,name:"Chain of Custody",diff:1,dname:"Integrity",pts:100,station:"INTAKE",
+  mitre:"Evidence integrity · NIST SP 800-86 · hash verification (MD5/SHA-256)"},
+ {id:1,name:"File Carving",diff:2,dname:"Signatures",pts:150,station:"CARVE",
+  mitre:"T1036.008 Masquerade File Type · magic-byte / file-signature analysis"},
+ {id:2,name:"Timeline & Timestomp",diff:3,dname:"Timeline",pts:200,station:"TIMELINE",
+  mitre:"T1070.006 Timestomp · $SI vs $FN MACB · Prefetch execution evidence"},
+ {id:3,name:"Registry Autopsy",diff:4,dname:"Registry",pts:250,station:"REGISTRY",
+  mitre:"T1547.001 Run Keys · USBSTOR device history · AmCache/ShimCache execution"},
+ {id:4,name:"Memory Forensics",diff:5,dname:"Memory",pts:300,station:"MEMORY",
+  mitre:"T1055 Process Injection · T1003.001 LSASS Dump · Volatility pslist/netscan/malfind"},
+ {id:5,name:"Reconstruct & Report",diff:6,dname:"Reporting",pts:400,station:"REPORT",
+  mitre:"Defensible timeline · findings vs speculation · chain of custody"},
+];
+function unlocked(i){return i===0||S.solved[i-1];}
+
+/* ===== HUB ===== */
+const cv=$('#game'),ctx=cv.getContext('2d');
+const W=960,H=600; cv.width=W;cv.height=H;
+const DESKS=[{x:150,y:140,lvl:0},{x:410,y:140,lvl:1},{x:670,y:140,lvl:2},{x:150,y:420,lvl:3},{x:410,y:420,lvl:4},{x:720,y:430,lvl:5,big:true}];
+const DESK_W=120,DESK_H=78,BIG_W=180,BIG_H=120;
+const player={x:W/2,y:300,w:26,h:34,spd:3.0};
+const keys={}; let nearDesk=null;
+function deskRect(d){const w=d.big?BIG_W:DESK_W,h=d.big?BIG_H:DESK_H;return {x:d.x,y:d.y,w,h};}
+function rectsOverlap(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;}
+function updatePlayer(){
+  if(overlayOpen)return;
+  let dx=0,dy=0;
+  if(keys.up)dy-=1;if(keys.down)dy+=1;if(keys.left)dx-=1;if(keys.right)dx+=1;
+  if(dx&&dy){dx*=0.707;dy*=0.707;}
+  const nx=player.x+dx*player.spd,ny=player.y+dy*player.spd;
+  let bx={x:nx,y:player.y,w:player.w,h:player.h},by={x:player.x,y:ny,w:player.w,h:player.h};
+  let blockX=false,blockY=false;
+  for(const d of DESKS){const r=deskRect(d);if(rectsOverlap(bx,r))blockX=true;if(rectsOverlap(by,r))blockY=true;}
+  player.x=Math.max(12,Math.min(W-player.w-12,blockX?player.x:nx));
+  player.y=Math.max(12,Math.min(H-player.h-12,blockY?player.y:ny));
+  nearDesk=null;let best=1e9;
+  for(const d of DESKS){const r=deskRect(d);const cx=r.x+r.w/2,cy=r.y+r.h+22;
+    const dist=Math.hypot(player.x+player.w/2-cx,player.y+player.h/2-cy);if(dist<70&&dist<best){best=dist;nearDesk=d;}}
+  const p=$('#prompt');
+  if(nearDesk){const L=LEVELS[nearDesk.lvl];const ok=unlocked(nearDesk.lvl);
+    if(ok){p.classList.add('show');p.innerHTML=`<span class="k">[ EXAMINE / E ]</span> ${S.solved[nearDesk.lvl]?'↻ Reopen':'▶ Open'} — Case ${nearDesk.lvl+1}: ${esc(L.name)}`;}
+    else{p.classList.add('show');p.innerHTML=`<span style="color:var(--dim)">🔒 Sealed — close Case ${nearDesk.lvl} first</span>`;}
+  }else p.classList.remove('show');
+}
+let anim=0;
+function draw(){
+  anim++;ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#0a0f17';ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle='rgba(40,56,78,.35)';ctx.lineWidth=1;
+  for(let x=0;x<=W;x+=40){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+  for(let y=0;y<=H;y+=40){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+  drawWallScreen();
+  for(const d of DESKS)drawDesk(d);
+  drawPlayer();
+  ctx.fillStyle='rgba(69,86,107,.6)';ctx.font='11px "IBM Plex Mono",monospace';ctx.textAlign='left';
+  ctx.fillText('DIGITAL FORENSICS LAB — EVIDENCE CTRL',16,H-14);
+  ctx.textAlign='right';ctx.fillText('JMOC // CHAIN OF CUSTODY',W-16,H-14);ctx.textAlign='left';
+}
+function drawWallScreen(){
+  const g=ctx.createLinearGradient(0,0,0,70);g.addColorStop(0,'#0a1620');g.addColorStop(1,'#0a0f17');
+  ctx.fillStyle=g;ctx.fillRect(0,0,W,70);ctx.strokeStyle='#17283e';ctx.strokeRect(.5,.5,W-1,70);
+  const n=S.solved.filter(Boolean).length;
+  ctx.font='12px "IBM Plex Mono",monospace';ctx.fillStyle=n>=6?'#4fd4e0':'#f2b23e';ctx.textAlign='center';
+  ctx.fillText(n>=6?'● CASE CLOSED — REPORT FILED':'● EXAMINATION IN PROGRESS — '+(6-n)+' ITEM(S) PENDING',W/2,26);
+  ctx.strokeStyle='rgba(79,212,224,.5)';ctx.lineWidth=1.5;ctx.beginPath();
+  for(let i=0;i<W;i+=14){const y=46+Math.sin((i+anim*2)/40)*8+Math.sin(i/13)*4;i===0?ctx.moveTo(i,y):ctx.lineTo(i,y);}
+  ctx.stroke();ctx.textAlign='left';
+}
+function drawDesk(d){
+  const r=deskRect(d),L=LEVELS[d.lvl],ok=unlocked(d.lvl),done=S.solved[d.lvl];
+  ctx.fillStyle='rgba(0,0,0,.35)';roundRect(r.x+4,r.y+6,r.w,r.h,8);ctx.fill();
+  ctx.fillStyle=done?'#0d2629':ok?'#141f2e':'#111722';roundRect(r.x,r.y,r.w,r.h,8);ctx.fill();
+  ctx.strokeStyle=done?'#2a7f88':ok?'#28405e':'#1c2433';ctx.lineWidth=1.5;roundRect(r.x,r.y,r.w,r.h,8);ctx.stroke();
+  const mw=r.w*0.56,mh=r.h*0.42,mx=r.x+(r.w-mw)/2,my=r.y+10;
+  const col=done?'#4fd4e0':ok?'#56a8ff':'#45566b';
+  if(ok&&!done){ctx.save();ctx.shadowColor=col;ctx.shadowBlur=14+Math.sin(anim/20)*5;}
+  else if(done){ctx.save();ctx.shadowColor=col;ctx.shadowBlur=10;}else ctx.save();
+  ctx.fillStyle=done?'#0b3338':ok?'#0a2238':'#0c1119';roundRect(mx,my,mw,mh,4);ctx.fill();ctx.restore();
+  ctx.strokeStyle=col;ctx.lineWidth=1.5;roundRect(mx,my,mw,mh,4);ctx.stroke();
+  ctx.strokeStyle='rgba(255,255,255,.05)';ctx.lineWidth=1;
+  for(let y=my+4;y<my+mh;y+=4){ctx.beginPath();ctx.moveTo(mx+3,y);ctx.lineTo(mx+mw-3,y);ctx.stroke();}
+  ctx.font='bold 14px "IBM Plex Mono",monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle=col;
+  ctx.fillText(done?'✓':ok?(d.lvl+1):'🔒',mx+mw/2,my+mh/2);ctx.textBaseline='alphabetic';
+  ctx.font='10.5px "IBM Plex Mono",monospace';ctx.textAlign='center';ctx.fillStyle=ok?'#8aa0ba':'#45566b';
+  ctx.fillText((d.big?'REPORT DESK':'BENCH '+L.station),r.x+r.w/2,r.y+r.h+16);
+  ctx.fillStyle=done?'#4fd4e0':ok?'#cdd8e6':'#45566b';ctx.font='11px "IBM Plex Sans",sans-serif';
+  wrapText('Case '+(d.lvl+1)+': '+L.name,r.x+r.w/2,r.y+r.h+30,r.w+40,12);ctx.textAlign='left';
+}
+function wrapText(txt,cx,y,maxw,lh){const words=txt.split(' ');let line='';let yy=y;
+  for(const w of words){const test=line?line+' '+w:w;if(ctx.measureText(test).width>maxw&&line){ctx.fillText(line,cx,yy);line=w;yy+=lh;}else line=test;}ctx.fillText(line,cx,yy);}
+function drawPlayer(){
+  const p=player;
+  ctx.fillStyle='rgba(0,0,0,.4)';ctx.beginPath();ctx.ellipse(p.x+p.w/2,p.y+p.h,14,5,0,0,7);ctx.fill();
+  ctx.fillStyle='#e6edf2';roundRect(p.x,p.y+10,p.w,p.h-10,5);ctx.fill();   // lab coat
+  ctx.strokeStyle='#4fd4e0';ctx.lineWidth=1.2;roundRect(p.x,p.y+10,p.w,p.h-10,5);ctx.stroke();
+  ctx.fillStyle='#d8b48a';ctx.beginPath();ctx.arc(p.x+p.w/2,p.y+8,8,0,7);ctx.fill();
+  ctx.fillStyle='#1a2633';ctx.fillRect(p.x+5,p.y+16,p.w-10,3); // badge line
+  ctx.fillStyle='#4fd4e0';ctx.fillRect(p.x+p.w/2-3,p.y+20,6,7);
+}
+function roundRect(x,y,w,h,r){ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();}
+function loop(){updatePlayer();draw();requestAnimationFrame(loop);}
+function fit(){const stage=$('#stage');const sw=stage.clientWidth,sh=stage.clientHeight;const scale=Math.min(sw/W,sh/H);cv.style.width=(W*scale)+'px';cv.style.height=(H*scale)+'px';}
+window.addEventListener('resize',fit);
+
+const KMAP={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',w:'up',s:'down',a:'left',d:'right',W:'up',S:'down',A:'left',D:'right'};
+addEventListener('keydown',e=>{if(overlayOpen){if(e.key==='Escape')closeOverlay();return;}
+  if(KMAP[e.key]){keys[KMAP[e.key]]=true;e.preventDefault();}
+  if((e.key==='e'||e.key==='E'||e.key==='Enter')&&nearDesk&&unlocked(nearDesk.lvl))openLevel(nearDesk.lvl);});
+addEventListener('keyup',e=>{if(KMAP[e.key])keys[KMAP[e.key]]=false;});
+document.querySelectorAll('#touch .dpad button[data-d]').forEach(b=>{const d=b.dataset.d;
+  const on=e=>{e.preventDefault();keys[d]=true;},off=e=>{e.preventDefault();keys[d]=false;};
+  b.addEventListener('touchstart',on,{passive:false});b.addEventListener('touchend',off);b.addEventListener('touchcancel',off);
+  b.addEventListener('mousedown',on);b.addEventListener('mouseup',off);b.addEventListener('mouseleave',off);});
+$('#actBtn').addEventListener('click',()=>{if(nearDesk&&unlocked(nearDesk.lvl))openLevel(nearDesk.lvl);});
+if(matchMedia('(pointer:coarse)').matches)$('#touch').style.display='flex';
+$('#missBtn').addEventListener('click',()=>$('#missions').classList.toggle('show'));
+function renderMissions(){const m=$('#missions');m.innerHTML='';
+  LEVELS.forEach(L=>{const done=S.solved[L.id],ok=unlocked(L.id);const row=el('div','mrow'+(ok?'':' locked'));
+    row.innerHTML=`<span class="st ${done?'done':ok?'open':'lock'}">${done?'✓':ok?(L.id+1):'🔒'}</span>
+      <span class="nm">Case ${L.id+1}: ${esc(L.name)}<small>${esc(L.dname)} · ${L.pts} pts</small></span>`;
+    if(ok)row.style.cursor='pointer',row.onclick=()=>{m.classList.remove('show');openLevel(L.id);};
+    m.appendChild(row);});}
+
+/* ===== overlay system ===== */
+let overlayOpen=false,curLevel=null;
+function openOverlay(html){$('#sheet').innerHTML=html;$('#overlay').classList.add('show');overlayOpen=true;$('#overlay').scrollTop=0;}
+function closeOverlay(){$('#overlay').classList.remove('show');overlayOpen=false;curLevel=null;}
+window.closeOverlay=closeOverlay;
+function levelHeader(L){return `<div class="pz-top"><span class="lvlno">CASE ${L.id+1}</span><h2>${esc(L.name)}</h2>
+  <span class="diff d${L.diff}">${'◆'.repeat(Math.min(L.diff,6))} ${esc(L.dname)}</span>
+  <button class="x" onclick="closeOverlay()">✕</button></div>`;}
+function feedbackBox(){return `<div class="fb" id="fb"></div>`;}
+function showFb(kind,html,mitre){const fb=$('#fb');fb.className='fb show '+kind;
+  fb.innerHTML=html+(mitre?`<span class="mitre">⬡ ${esc(mitre)}</span>`:'');fb.scrollIntoView({behavior:'smooth',block:'nearest'});}
+function clearFb(){const fb=$('#fb');if(fb){fb.className='fb';fb.innerHTML='';}}
+function useHint(lvl,texts){const used=S.hints[lvl]||0;
+  if(used>=texts.length){showFb('hint',`<b>No more hints.</b> Trust the artifacts.`);return;}
+  S.hints[lvl]=used+1;showFb('hint',`<b>Hint ${used+1}/${texts.length}</b> — ${texts[used]}<br><span style="color:var(--dim);font-size:12px">(−10 pts at close)</span>`);save();}
+function solveLevel(L,note){const first=!S.solved[L.id];S.solved[L.id]=true;
+  if(first){const hp=(S.hints[L.id]||0)*10;const gain=Math.max(20,L.pts-hp);S.score+=gain;save();refreshHUD();
+    showFb('pass',`<b>✓ CASE CLOSED.</b> ${note||''}<br>+${gain} pts${hp?` <span style="color:var(--dim)">(−${hp} hints)</span>`:''}. ${L.id<5?'Next bench unlocked.':'Report ready to file.'}`,L.mitre);}
+  else showFb('pass',`<b>✓ Correct.</b> ${note||''} (already solved — no new points)`,L.mitre);
+  const sb=$('#solveBtn');if(sb){sb.textContent=L.id<5?'Back to lab →':'File the report →';sb.onclick=()=>{if(L.id===5){closeOverlay();showSummary();}else closeOverlay();};}}
+function hintBtn(L,texts){const b=el('button','btn ghost');b.textContent='💡 Hint';b.onclick=()=>useHint(L.id,texts);return b;}
+function bindRadio(sel,attr,cb){const g=$(sel);g.querySelectorAll('.opt').forEach(o=>o.addEventListener('click',()=>{
+  g.querySelectorAll('.opt').forEach(x=>{x.classList.remove('sel');x.querySelector('.box').textContent='';});
+  o.classList.add('sel');o.querySelector('.box').textContent='✓';cb(o.dataset[attr]);}));}
+function bindMulti(sel,set,attr){$(sel).querySelectorAll('.opt').forEach(o=>o.addEventListener('click',()=>{
+  o.classList.toggle('sel');const on=o.classList.contains('sel');o.querySelector('.box').textContent=on?'✓':'';
+  const k=o.dataset[attr];on?set.add(k):set.delete(k);}));}
+function openLevel(i){if(!unlocked(i))return;curLevel=i;running=true;S.started=true;
+  [renderL1,renderL2,renderL3,renderL4,renderL5,renderL6][i]();}
+
+/* ===========================================================================
+   CASE 1 — CHAIN OF CUSTODY / EVIDENCE INTEGRITY
+   =========================================================================== */
+function renderL1(){
+  const L=LEVELS[0];
+  const rows=[
+    ['E-01','WKSTN-14 system drive','a1f3...9c2b','a1f3...9c2b','YES','ok'],
+    ['E-02','USB thumb drive (32GB)','7d4e...be10','7d4e...be10','YES','ok'],
+    ['E-03','RAM capture (16GB)','c9a0...44f1','e22b...90dd','YES','bad'],
+    ['E-04','External HDD (backup)','55bc...1a7e','55bc...1a7e','NO','warn'],
+  ];
+  const body=rows.map(r=>`<tr data-id="${r[0]}" style="cursor:pointer">
+    <td class="c-b">${r[0]}</td><td>${esc(r[1])}</td>
+    <td class="c-m">${r[2]}</td><td class="${r[5]==='bad'?'c-r':'c-m'}">${r[3]}</td>
+    <td>${r[4]==='YES'?'<span class="pill ok">YES</span>':'<span class="pill warn">NO</span>'}</td></tr>`).join('');
+  openOverlay(`${levelHeader(L)}
+   <p class="brief">Evidence just arrived from the field. Before a single byte of analysis, you verify integrity: the <b>acquisition hash</b> (taken at seizure) must equal the <b>verification hash</b> (recomputed now). A mismatch means the image changed in custody — it's inadmissible until explained. Click the item whose integrity failed, then choose how to proceed.</p>
+   <div class="sect-label">Evidence intake log — acquisition vs verification (SHA-256, truncated)</div>
+   <div class="tbl-wrap"><table class="log"><thead><tr><th>Item</th><th>Description</th><th>Acquired hash</th><th>Verify hash</th><th>Write-blocker</th></tr></thead><tbody id="ebody">${body}</tbody></table></div>
+   <p class="note" id="pick">Flagged item: <b>none</b></p>
+   <div class="sect-label">How do you proceed?</div>
+   <div class="opts" id="act">
+     <button class="opt radio" data-a="ignore"><span class="box"></span><span>Analyze all four images — a hash is just a formality</span></button>
+     <button class="opt radio" data-a="doc"><span class="box"></span><span>Document the integrity failure, quarantine that item, note it in the chain-of-custody log, and re-acquire from source if still available; proceed with the verified items</span></button>
+     <button class="opt radio" data-a="delete"><span class="box"></span><span>Delete the corrupted image and move on</span></button>
+   </div>
+   ${feedbackBox()}<div class="btnrow" id="row"></div>`);
+  let pick=null,act=null;
+  $('#ebody').querySelectorAll('tr').forEach(tr=>tr.addEventListener('click',()=>{
+    $('#ebody').querySelectorAll('tr').forEach(x=>x.style.outline='');tr.style.outline='2px solid var(--accent)';
+    pick=tr.dataset.id;$('#pick').innerHTML='Flagged item: <b>'+pick+'</b>';}));
+  bindRadio('#act','a',a=>act=a);
+  const row=$('#row');
+  row.appendChild(hintBtn(L,[
+    "Compare each row's acquired hash to its verify hash character by character.",
+    "E-03's acquired hash (c9a0…44f1) and verify hash (e22b…90dd) differ — that image changed since seizure. E-04 lacks a write-blocker (a process note), but its hashes still match.",
+    "Never delete evidence, and never silently analyze a tampered image. Document the failure, quarantine E-03, record it in the chain of custody, re-acquire if the source persists."
+  ]));
+  const sub=el('button','btn primary sp');sub.textContent='Confirm';sub.id='solveBtn';
+  sub.onclick=()=>{clearFb();
+    if(pick!=='E-03'){showFb('fail',`${pick||'Nothing'} isn't the integrity failure. A failure is where <b>acquired ≠ verify</b> hash. E-04's missing write-blocker is worth a note, but its hashes match.`);return;}
+    if(act!=='doc'){showFb('fail',`Right item (E-03 — hash mismatch). But deleting destroys evidence and ignoring taints your findings. Pick the option that preserves admissibility.`);return;}
+    solveLevel(L,`E-03's verify hash doesn't match acquisition — the RAM capture changed in custody. Documented, quarantined, logged, re-acquire if possible. The other three are verified and safe to work.`);};
+  row.appendChild(sub);
+}
+
+/* ===========================================================================
+   CASE 2 — FILE CARVING / MAGIC BYTES
+   =========================================================================== */
+function renderL2(){
+  const L=LEVELS[1];
+  const files=[
+    {n:'holiday.jpg',hdr:'FF D8 FF E0',claim:'JPEG image',real:'JPEG',bad:false},
+    {n:'report.pdf',hdr:'25 50 44 46',claim:'PDF document',real:'PDF',bad:false},
+    {n:'budget.xlsx',hdr:'50 4B 03 04',claim:'Office/ZIP',real:'ZIP (OOXML)',bad:false},
+    {n:'invoice_scan.jpg',hdr:'4D 5A 90 00',claim:'JPEG image',real:'PE executable (MZ)',bad:true},
+    {n:'notes.txt',hdr:'EF BB BF 54',claim:'UTF-8 text',real:'UTF-8 text (BOM)',bad:false},
+    {n:'archive.rar',hdr:'52 61 72 21',claim:'RAR archive',real:'RAR',bad:false},
+  ];
+  const body=files.map((f,i)=>`<tr data-i="${i}" style="cursor:pointer">
+    <td>${esc(f.n)}</td><td class="c-a">${f.hdr}</td><td class="c-m">${esc(f.claim)}</td></tr>`).join('');
+  openOverlay(`${levelHeader(L)}
+   <p class="brief">You carved six files from unallocated space on E-01. Extensions lie — the <b>magic bytes</b> (the first few bytes of the file) don't. One of these is malware wearing an image's name. Use the signature reference, find the impostor (click its row), and name what it really is.</p>
+   <div class="sect-label">File-signature reference</div>
+   <div class="hexref" style="margin-bottom:10px">
+     <div><b>FF D8 FF</b> — JPEG</div><div><b>25 50 44 46</b> (%PDF) — PDF</div>
+     <div><b>50 4B 03 04</b> (PK..) — ZIP / OOXML</div><div><b>4D 5A</b> (MZ) — Windows PE / EXE</div>
+     <div><b>52 61 72 21</b> (Rar!) — RAR</div><div><b>EF BB BF</b> — UTF-8 BOM text</div>
+   </div>
+   <div class="sect-label">Carved files — header bytes</div>
+   <div class="tbl-wrap"><table class="log"><thead><tr><th>Filename</th><th>First bytes (hex)</th><th>Claimed type</th></tr></thead><tbody id="fbody">${body}</tbody></table></div>
+   <p class="note" id="fpick">Flagged file: <b>none</b></p>
+   <div class="field"><label>What is the impostor actually? (type)</label><input id="rtype" placeholder="e.g. PDF, ZIP, PE executable" autocomplete="off"></div>
+   ${feedbackBox()}<div class="btnrow" id="row"></div>`);
+  let pick=null;
+  $('#fbody').querySelectorAll('tr').forEach(tr=>tr.addEventListener('click',()=>{
+    $('#fbody').querySelectorAll('tr').forEach(x=>x.style.outline='');tr.style.outline='2px solid var(--accent)';
+    pick=+tr.dataset.i;$('#fpick').innerHTML='Flagged file: <b>'+esc(files[pick].n)+'</b>';}));
+  const row=$('#row');
+  row.appendChild(hintBtn(L,[
+    "Read each header against the reference. Four match their extension cleanly.",
+    "invoice_scan.jpg starts with 4D 5A — that's 'MZ', the DOS/PE header of a Windows executable. It's not a JPEG at all.",
+    "A .jpg beginning with MZ is a renamed PE — the attacker's payload hidden as a scanned image."
+  ]));
+  const sub=el('button','btn primary sp');sub.textContent='Confirm';sub.id='solveBtn';
+  sub.onclick=()=>{clearFb();
+    const t=$('#rtype').value.toLowerCase();
+    const typeOK=/(pe|executable|exe|mz|portable executable)/.test(t);
+    if(pick!==3){showFb('fail',`That file's header matches its extension. Find the one whose magic bytes contradict the name — scan the hex against the reference.`);return;}
+    if(!typeOK){$('#rtype').className='bad';showFb('fail',`Right file (invoice_scan.jpg). But name what <b>4D 5A</b> really is — those bytes spell "MZ", the signature of a Windows PE/EXE.`);return;}
+    $('#rtype').className='ok';
+    solveLevel(L,`invoice_scan.jpg is a Windows PE (4D 5A = "MZ"), not an image — a masqueraded executable. Hash it, submit to the malware bench, and treat it as the likely dropper.`);};
+  row.appendChild(sub);
+}
+
+/* ===========================================================================
+   CASE 3 — TIMELINE & TIMESTOMP ($SI vs $FN + Prefetch)
+   =========================================================================== */
+function renderL3(){
+  const L=LEVELS[2];
+  // Timestomped file: $SI modified predates $FN created (impossible). Prefetch gives true run time.
+  const mft=[
+    {f:'C:\\Windows\\System32\\drivers\\etc\\hosts',si:'2019-03-12 08:01',fn:'2019-03-12 08:01',bad:false},
+    {f:'C:\\Users\\jh\\AppData\\Roaming\\svch0st.exe',si:'2009-07-14 01:14',fn:'2026-10-18 02:41',bad:true},
+    {f:'C:\\Users\\jh\\Documents\\q3-budget.xlsx',si:'2026-10-02 14:22',fn:'2026-10-02 14:22',bad:false},
+    {f:'C:\\Users\\jh\\Downloads\\invoice_scan.jpg',si:'2026-10-18 02:39',fn:'2026-10-18 02:39',bad:false},
+  ];
+  const body=mft.map((r,i)=>`<tr data-i="${i}" style="cursor:pointer">
+    <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis">${esc(r.f)}</td>
+    <td class="${r.bad?'c-r':'c-m'}">${r.si}</td><td class="c-m">${r.fn}</td></tr>`).join('');
+  openOverlay(`${levelHeader(L)}
+   <p class="brief">Someone backdated a file to hide it. In the MFT, <code>$STANDARD_INFORMATION</code> ($SI) timestamps are what Explorer shows — and what timestomping tools rewrite. <code>$FILE_NAME</code> ($FN) timestamps are set by the kernel and far harder to forge. When <b>$SI predates $FN</b>, that's impossible — the file was timestomped. Find it, then read its <i>real</i> first-execution time from Prefetch.</p>
+   <div class="sect-label">$MFT — $SI vs $FN (Modified)</div>
+   <div class="tbl-wrap"><table class="log"><thead><tr><th>File</th><th>$SI Modified</th><th>$FN Created</th></tr></thead><tbody id="mbody">${body}</tbody></table></div>
+   <p class="note" id="mpick">Flagged file: <b>none</b></p>
+   <div class="sect-label">Prefetch — C:\\Windows\\Prefetch\\</div>
+   <div class="term"><div class="term-bar"><span class="tl"><i></i><i></i><i></i></span><span>PECmd output</span></div>
+     <div class="term-body sm"><span class="c-m">SVCH0ST.EXE-9A2B1C4D.pf</span> &nbsp; run count: 3 &nbsp; <span class="c-a">last run: 2026-10-18 02:42:07</span> &nbsp; first run: <span class="c-a">2026-10-18 02:41:55</span><br>
+     <span class="c-m">EXCEL.EXE-1D2E3F4A.pf</span> &nbsp; run count: 51 &nbsp; last run: 2026-10-18 09:12:33</div></div>
+   <div class="field"><label>Real first-execution date of the stomped file (YYYY-MM-DD)</label><input id="rundate" placeholder="YYYY-MM-DD" autocomplete="off"></div>
+   ${feedbackBox()}<div class="btnrow" id="row"></div>`);
+  let pick=null;
+  $('#mbody').querySelectorAll('tr').forEach(tr=>tr.addEventListener('click',()=>{
+    $('#mbody').querySelectorAll('tr').forEach(x=>x.style.outline='');tr.style.outline='2px solid var(--accent)';
+    pick=+tr.dataset.i;$('#mpick').innerHTML='Flagged file: <b>'+esc(mft[pick].f.split('\\').pop())+'</b>';}));
+  const row=$('#row');
+  row.appendChild(hintBtn(L,[
+    "A file can't be modified before its name record was created. Look for $SI far earlier than $FN.",
+    "svch0st.exe shows $SI Modified = 2009 but $FN Created = 2026-10-18 — the 2009 date is forged. Explorer would show 2009; the kernel knows better.",
+    "Prefetch doesn't lie: SVCH0ST.EXE first ran 2026-10-18 02:41:55. That's the true execution date — minutes after invoice_scan.jpg landed in Downloads."
+  ]));
+  const sub=el('button','btn primary sp');sub.textContent='Confirm';sub.id='solveBtn';
+  sub.onclick=()=>{clearFb();
+    const d=$('#rundate').value.trim();
+    if(pick!==1){showFb('fail',`That file's $SI and $FN agree — not stomped. Find the row where $SI is <i>earlier</i> than $FN, which is physically impossible.`);return;}
+    if(d!=='2026-10-18'){$('#rundate').className='bad';showFb('fail',`Right file (svch0st.exe — $SI says 2009, $FN says 2026). Ignore the forged $SI and read Prefetch for the true first-run date.`);return;}
+    $('#rundate').className='ok';
+    solveLevel(L,`svch0st.exe was timestomped to 2009 to bury it, but $FN and Prefetch both place real activity at 2026-10-18 ~02:41 — seconds after the malicious "invoice_scan.jpg" hit Downloads. That's your execution anchor.`);};
+  row.appendChild(sub);
+}
+
+/* ===========================================================================
+   CASE 4 — REGISTRY AUTOPSY (persistence + USB + execution)
+   =========================================================================== */
+function renderL4(){
+  const L=LEVELS[3];
+  openOverlay(`${levelHeader(L)}
+   <p class="brief">The registry remembers everything. Pull persistence, removable-media history, and execution evidence from the hives, then answer three questions. The exfil window you're scoping is <b>2026-10-18 02:40–03:10</b>.</p>
+   <div class="sect-label">NTUSER.DAT — \\Software\\Microsoft\\Windows\\CurrentVersion\\Run</div>
+   <div class="opts" id="run">
+     <button class="opt radio" data-r="onedrive"><span class="box"></span><span><code>OneDrive</code> → C:\\Program Files\\Microsoft OneDrive\\OneDrive.exe <span class="tag">signed, default path</span></span></button>
+     <button class="opt radio" data-r="svc"><span class="box"></span><span><code>WinUpdateSvc</code> → C:\\Users\\jh\\AppData\\Roaming\\svch0st.exe <span class="tag">user-writable path, lookalike name</span></span></button>
+     <button class="opt radio" data-r="steam"><span class="box"></span><span><code>Steam</code> → C:\\Program Files (x86)\\Steam\\steam.exe <span class="tag">signed</span></span></button>
+   </div>
+   <div class="sect-label">SYSTEM — \\...\\USBSTOR (removable device history)</div>
+   <div class="tbl-wrap"><table class="log"><thead><tr><th>Device</th><th>Serial</th><th>First connected</th><th>Last connected</th></tr></thead><tbody>
+     <tr><td>SanDisk Cruzer</td><td class="c-b">4C531001</td><td class="c-m">2026-09-03 11:20</td><td class="c-m">2026-09-30 17:02</td></tr>
+     <tr><td>Kingston DT</td><td class="c-b">0019E06B</td><td class="c-m">2026-10-18 02:58</td><td class="c-m">2026-10-18 03:07</td></tr>
+     <tr><td>Seagate Expansion</td><td class="c-b">NA4F12Q2</td><td class="c-m">2026-08-11 09:41</td><td class="c-m">2026-10-15 08:33</td></tr>
+   </tbody></table></div>
+   <div class="sect-label">AmCache.hve — execution evidence</div>
+   <div class="term"><div class="term-bar"><span class="tl"><i></i><i></i><i></i></span><span>AmCacheParser</span></div>
+     <div class="term-body sm">svch0st.exe &nbsp; SHA1: 3f9a..d1 &nbsp; <span class="c-a">first exec: 2026-10-18 02:41:55</span> &nbsp; path: AppData\\Roaming<br>
+     7zG.exe &nbsp; SHA1: 55ab..9c &nbsp; first exec: 2026-10-18 02:55:10 &nbsp; <span class="c-m">(archiver — staging?)</span></div></div>
+   <div class="field"><label>Which Run value is the persistence mechanism? (select above — confirm here with the value name)</label><input id="persist" placeholder="value name" autocomplete="off"></div>
+   <div class="field"><label>USB serial connected during the exfil window</label><input id="usb" placeholder="serial" autocomplete="off"></div>
+   ${feedbackBox()}<div class="btnrow" id="row"></div>`);
+  let runPick=null;
+  bindRadio('#run','r',r=>runPick=r);
+  const row=$('#row');
+  row.appendChild(hintBtn(L,[
+    "Persistence hides in plain sight: a Run value with an official-sounding name pointing at a user-writable folder, not Program Files.",
+    "WinUpdateSvc → AppData\\Roaming\\svch0st.exe is the persistence — legit updaters don't live in a user's Roaming profile, and 'svch0st' is a lookalike.",
+    "Match the USBSTOR last/first-connected times to the window 02:40–03:10. Only the Kingston (serial 0019E06B) was plugged in then — connected 02:58, pulled 03:07, right after 7zip staged an archive."
+  ]));
+  const sub=el('button','btn primary sp');sub.textContent='Confirm findings';sub.id='solveBtn';
+  sub.onclick=()=>{clearFb();
+    const pv=$('#persist').value.toLowerCase().replace(/\s/g,'');
+    const usb=$('#usb').value.trim().toUpperCase();
+    const runOK=runPick==='svc' && /winupdatesvc|svch0st/.test(pv);
+    const usbOK=usb==='0019E06B';
+    $('#usb').className=usbOK?'ok':'bad';$('#persist').className=runOK?'ok':'bad';
+    if(!runOK){showFb('fail',`Persistence is off. Select the Run value whose target sits in a user-writable path with a spoofed name, and type that value's name (WinUpdateSvc).`);return;}
+    if(!usbOK){showFb('fail',`Persistence is right (WinUpdateSvc → svch0st.exe). Now the USB: which serial's connect time falls inside 02:40–03:10?`);return;}
+    solveLevel(L,`Persistence: WinUpdateSvc Run key → AppData\\Roaming\\svch0st.exe (AmCache confirms first exec 02:41:55). Exfil media: Kingston serial 0019E06B, connected 02:58–03:07, right after 7zG.exe staged an archive. That's your data-theft vector.`);};
+  row.appendChild(sub);
+}
+
+/* ===========================================================================
+   CASE 5 — MEMORY FORENSICS (Volatility-style)
+   =========================================================================== */
+function renderL5(){
+  const L=LEVELS[4];
+  const ps=[
+    {pid:4,ppid:0,name:'System',note:'',bad:false},
+    {pid:632,ppid:4,name:'smss.exe',note:'',bad:false},
+    {pid:812,ppid:632,name:'services.exe',note:'',bad:false},
+    {pid:1120,ppid:812,name:'svchost.exe',note:'',bad:false},
+    {pid:2470,ppid:812,name:'svch0st.exe',note:'psscan-only (unlinked), no path on disk match',bad:true,
+      why:'Hidden/unlinked: appears in psscan but not pslist — the process object was unlinked from the active list (DKOM-style hiding). Owns the C2 socket.'},
+    {pid:2210,ppid:1120,name:'explorer.exe',note:'',bad:false},
+    {pid:3310,ppid:2470,name:'rundll32.exe',note:'malfind: RWX private region, no DLL arg',bad:false},
+  ];
+  const body=ps.map((p,i)=>`<tr data-i="${i}" style="cursor:pointer">
+    <td class="c-b">${p.pid}</td><td class="c-m">${p.ppid}</td><td>${esc(p.name)}</td>
+    <td class="${p.bad?'c-r':'c-m'}" style="max-width:260px;white-space:normal">${esc(p.note)||'—'}</td></tr>`).join('');
+  openOverlay(`${levelHeader(L)}
+   <p class="brief">The re-acquired RAM image is clean this time. Run it like Volatility: <code>pslist</code> vs <code>psscan</code> to catch hidden processes, <code>netscan</code> for live C2, <code>cmdline</code> for what ran. Flag the hidden process, name the C2 endpoint, and identify the credential-theft command.</p>
+   <div class="sect-label">pslist / psscan — processes</div>
+   <div class="tbl-wrap"><table class="log"><thead><tr><th>PID</th><th>PPID</th><th>Name</th><th>Anomaly</th></tr></thead><tbody id="pbody">${body}</tbody></table></div>
+   <p class="note" id="ppick">Flagged PID: <b>none</b></p>
+   <div class="sect-label">netscan</div>
+   <div class="term"><div class="term-bar"><span class="tl"><i></i><i></i><i></i></span><span>volatility3 windows.netscan</span></div>
+     <div class="term-body sm">TCP &nbsp; 10.4.2.14:50122 → <span class="c-a">185.220.101.47:8443</span> &nbsp; ESTABLISHED &nbsp; <span class="c-r">PID 2470 (svch0st.exe)</span><br>
+     TCP &nbsp; 10.4.2.14:50088 → 52.14.88.3:443 &nbsp; ESTABLISHED &nbsp; PID 2210 (explorer.exe)<br>
+     TCP &nbsp; 10.4.2.14:139 → 0.0.0.0 &nbsp; LISTENING &nbsp; PID 4 (System)</div></div>
+   <div class="sect-label">cmdline</div>
+   <div class="term"><div class="term-bar"><span class="tl"><i></i><i></i><i></i></span><span>volatility3 windows.cmdline</span></div>
+     <div class="term-body sm">2470 svch0st.exe &nbsp; "C:\\Users\\jh\\AppData\\Roaming\\svch0st.exe"<br>
+     3310 rundll32.exe &nbsp; <span class="c-a">rundll32.exe C:\\Windows\\System32\\comsvcs.dll, MiniDump 712 C:\\ProgramData\\lsass.dmp full</span></div></div>
+   <div class="field"><label>C2 endpoint (IP:port)</label><input id="c2" placeholder="e.g. 1.2.3.4:443" autocomplete="off"></div>
+   <div class="sect-label">What is the rundll32 command doing?</div>
+   <div class="opts" id="cred">
+     <button class="opt radio" data-c="print"><span class="box"></span><span>Printing a document via comsvcs.dll</span></button>
+     <button class="opt radio" data-c="dump"><span class="box"></span><span>Dumping LSASS memory (PID 712) via the comsvcs.dll MiniDump export — credential theft</span></button>
+     <button class="opt radio" data-c="update"><span class="box"></span><span>A routine Windows component update</span></button>
+   </div>
+   ${feedbackBox()}<div class="btnrow" id="row"></div>`);
+  let pick=null,cred=null;
+  $('#pbody').querySelectorAll('tr').forEach(tr=>tr.addEventListener('click',()=>{
+    $('#pbody').querySelectorAll('tr').forEach(x=>x.style.outline='');tr.style.outline='2px solid var(--accent)';
+    pick=+tr.dataset.i;$('#ppick').innerHTML='Flagged PID: <b>'+ps[pick].pid+'</b>';}));
+  bindRadio('#cred','c',c=>cred=c);
+  const row=$('#row');
+  row.appendChild(hintBtn(L,[
+    "A process that shows in psscan but not pslist has been unlinked from the active process list to hide — classic DKOM.",
+    "PID 2470 svch0st.exe is the hidden one, and netscan shows it owns the ESTABLISHED session to 185.220.101.47:8443.",
+    "rundll32 calling comsvcs.dll's MiniDump against PID 712 (lsass) writing lsass.dmp = LSASS credential dumping (T1003.001), a signed-binary LOLBin technique."
+  ]));
+  const sub=el('button','btn primary sp');sub.textContent='Confirm';sub.id='solveBtn';
+  sub.onclick=()=>{clearFb();
+    const c2=$('#c2').value.trim();const c2OK=c2==='185.220.101.47:8443';
+    $('#c2').className=c2OK?'ok':'bad';
+    if(ps[pick]&&!ps[pick].bad||pick==null){showFb('fail',`That's not the hidden process. Compare psscan to pslist — one entry is unlinked from the active list (shown by its anomaly note).`);return;}
+    if(!c2OK){showFb('fail',`Right — PID 2470 is the hidden implant. Now read netscan for the ESTABLISHED session it owns and give IP:port.`);return;}
+    if(cred!=='dump'){showFb('fail',`C2 is right (185.220.101.47:8443). The rundll32 line uses comsvcs.dll MiniDump against PID 712 — what's PID 712? (It's lsass.) What technique is that?`);return;}
+    solveLevel(L,`Hidden implant svch0st.exe (PID 2470), unlinked from pslist, beaconing to 185.220.101.47:8443. It spawned rundll32 → comsvcs.dll MiniDump of LSASS (PID 712) to lsass.dmp — credential theft staged for exfil over the USB.`);};
+  row.appendChild(sub);
+}
+
+/* ===========================================================================
+   CASE 6 — RECONSTRUCT & REPORT (capstone)
+   =========================================================================== */
+function renderL6(){
+  const L=LEVELS[5];
+  const chain=[
+    {id:'deliver',t:'02:39 — invoice_scan.jpg (a renamed PE) lands in Downloads'},
+    {id:'exec',t:'02:41:55 — svch0st.exe first executes (Prefetch/AmCache)'},
+    {id:'persist',t:'02:42 — WinUpdateSvc Run key set → AppData\\Roaming\\svch0st.exe'},
+    {id:'cred',t:'02:47 — rundll32/comsvcs MiniDump of LSASS → lsass.dmp'},
+    {id:'stage',t:'02:55 — 7zG.exe archives collected data for staging'},
+    {id:'exfil',t:'02:58–03:07 — Kingston USB (0019E06B) connected; data copied off'},
+  ];
+  const CORRECT=['deliver','exec','persist','cred','stage','exfil'];
+  let ord=[...chain].sort(()=>Math.random()-0.5);
+  openOverlay(`${levelHeader(L)}
+   <p class="brief">Everything on one bench now. Build the <b>defensible timeline</b>, scope what left the building, and write conclusions that hold up — findings supported by artifacts, not guesses. An examiner's report that overreaches gets torn apart on cross-examination.</p>
+   <div class="sect-label">Confirmed artifacts (Cases 1–5)</div>
+   <div class="kv">
+     <span class="k">Host: <b>WKSTN-14</b></span><span class="k">Dropper: <b>invoice_scan.jpg → PE</b></span>
+     <span class="k">Implant: <b>svch0st.exe</b></span><span class="k">C2: <b>185.220.101.47:8443</b></span>
+     <span class="k">Cred theft: <b>lsass.dmp</b></span><span class="k">Exfil media: <b>USB 0019E06B</b></span>
+   </div>
+   <div class="sect-label">1 · Reconstruct the timeline (earliest → latest)</div>
+   <div class="order" id="order"></div>
+   <div class="sect-label">2 · Scope — what was exfiltrated / confirmed taken? (pick all supported)</div>
+   <div class="opts" id="scope">
+     <button class="opt" data-s="dump"><span class="box"></span><span>LSASS credential dump (lsass.dmp) — created on host</span></button>
+     <button class="opt" data-s="archive"><span class="box"></span><span>A staged 7-Zip archive copied to the Kingston USB during 02:58–03:07</span></button>
+     <button class="opt" data-s="usb"><span class="box"></span><span>Data left the host on removable media (USB serial 0019E06B)</span></button>
+     <button class="opt" data-s="cloud"><span class="box"></span><span>Terabytes exfiltrated to a cloud account (no artifact supports this)</span></button>
+     <button class="opt" data-s="everything"><span class="box"></span><span>Every file on every domain host was stolen</span></button>
+   </div>
+   <div class="sect-label">3 · Report conclusions — which are defensible? (pick all)</div>
+   <div class="opts" id="concl">
+     <button class="opt" data-c="facts"><span class="box"></span><span>State artifact-backed facts with timestamps and sources (MFT, Prefetch, AmCache, registry, memory)</span></button>
+     <button class="opt" data-c="hash"><span class="box"></span><span>Record hashes and note the E-03 integrity failure and its handling in the chain of custody</span></button>
+     <button class="opt" data-c="confidence"><span class="box"></span><span>Give assessments with explicit confidence levels where evidence is partial</span></button>
+     <button class="opt" data-c="attribute"><span class="box"></span><span>Name the specific nation-state APT responsible (no evidence ties this to a named actor)</span></button>
+     <button class="opt" data-c="motive"><span class="box"></span><span>Declare the attacker's motive and identity as established fact</span></button>
+   </div>
+   ${feedbackBox()}<div class="btnrow" id="row"></div>`);
+  function paintOrder(){const c=$('#order');c.innerHTML='';
+    ord.forEach((item,idx)=>{const r=el('div','oitem');
+      r.innerHTML=`<span class="num">${idx+1}</span><span>${esc(item.t)}</span>
+        <span class="mv"><button data-u="${idx}" ${idx===0?'disabled style=opacity:.3':''}>▲</button>
+        <button data-dn="${idx}" ${idx===ord.length-1?'disabled style=opacity:.3':''}>▼</button></span>`;c.appendChild(r);});
+    c.querySelectorAll('[data-u]').forEach(b=>b.onclick=()=>{const i=+b.dataset.u;[ord[i-1],ord[i]]=[ord[i],ord[i-1]];paintOrder();});
+    c.querySelectorAll('[data-dn]').forEach(b=>b.onclick=()=>{const i=+b.dataset.dn;[ord[i+1],ord[i]]=[ord[i],ord[i+1]];paintOrder();});}
+  paintOrder();
+  const scope=new Set(),concl=new Set();
+  bindMulti('#scope',scope,'s');bindMulti('#concl',concl,'c');
+  const row=$('#row');
+  row.appendChild(hintBtn(L,[
+    "Timeline follows the artifacts: delivery (02:39) → execution (02:41) → persistence → LSASS dump → 7-Zip staging → USB exfil.",
+    "Scope only what evidence supports: the LSASS dump, the staged archive, and USB egress. 'Cloud exfil' and 'every host' have zero backing artifacts.",
+    "Defensible = artifact-backed facts, documented hashes/integrity, confidence-qualified assessments. Naming a specific APT or declaring motive as fact is exactly the overreach that sinks a report."
+  ]));
+  const sub=el('button','btn primary sp');sub.textContent='File the report';sub.id='solveBtn';
+  sub.onclick=()=>{clearFb();
+    const orderOK=ord.map(o=>o.id).join(',')===CORRECT.join(',');
+    const scopeOK=scope.has('dump')&&scope.has('archive')&&scope.has('usb')&&!scope.has('cloud')&&!scope.has('everything');
+    const CW=['facts','hash','confidence'];
+    const conclOK=CW.every(k=>concl.has(k))&&!concl.has('attribute')&&!concl.has('motive');
+    const probs=[];
+    if(!orderOK)probs.push('the timeline order (delivery → execution → persistence → LSASS dump → staging → USB exfil)');
+    if(!scopeOK)probs.push('the scope (only the LSASS dump, staged archive, and USB egress are evidence-backed; cloud exfil and "every host" aren\'t)');
+    if(!conclOK)probs.push('the conclusions (state artifact-backed facts, document integrity, qualify with confidence — never name a specific APT or declare motive as fact)');
+    if(probs.length){showFb('fail',`Report sent back for revision. Fix: <b>${probs.join('</b>; <b>')}</b>.`);return;}
+    running=false;save();
+    solveLevel(L,`Timeline reconstructed from independent artifacts, scope limited to what the evidence proves, conclusions qualified and admissible. That report survives cross-examination.`);};
+  row.appendChild(sub);
+}
+
+/* ===== summary / title ===== */
+function showSummary(){
+  const n=S.solved.filter(Boolean).length;
+  const rows=LEVELS.map(L=>`<tr><td class="n">${L.id+1}</td><td class="t">${esc(L.name)}</td>
+    <td class="d">${S.solved[L.id]?'<span class="c-g">✓ closed</span>':'<span class="c-m">open</span>'}</td></tr>`).join('');
+  openOverlay(`<div class="card pad"><div class="title-wrap" style="padding-top:2vh">
+    <span class="eyebrow">Examination Report</span>
+    <h1>${n>=6?'REPORT <span>FILED</span>':'LAB CLOSED'}</h1>
+    <p class="tag">${n>=6?'Six artifacts, one coherent story — acquired cleanly, analyzed soundly, and written to survive court. The drive gave up its secrets.':'You logged off with evidence still on the bench. The case stays open.'}</p>
+    <div class="kv" style="justify-content:center;margin-top:16px">
+      <span class="k">Cases <b>${n}/6</b></span><span class="k">Score <b>${S.score}</b></span><span class="k">Bench time <b>${fmt(S.elapsed)}</b></span></div>
+    <table class="ttable">${rows}</table></div>
+    <div class="btnrow"><button class="btn sp" onclick="closeOverlay()">← Back to lab</button>
+    <button class="btn primary" onclick="resetGame()">Reset &amp; replay</button></div></div>`);
+}
+function resetGame(){S={solved:[false,false,false,false,false,false],score:0,hints:{},elapsed:0,started:false};
+  save();t0=performance.now();running=false;refreshHUD();closeOverlay();player.x=W/2;player.y=300;showTitle();}
+window.resetGame=resetGame;
+function showTitle(){
+  const resume=S.solved.some(Boolean);
+  const rows=LEVELS.map(L=>`<tr><td class="n">${L.id+1}</td><td class="t">${esc(L.name)}</td>
+    <td class="d">${'◆'.repeat(Math.min(L.diff,6))} ${esc(L.dname)}</td></tr>`).join('');
+  openOverlay(`<div class="card pad"><div class="title-wrap">
+    <span class="eyebrow">A digital-forensics puzzle</span>
+    <h1>DEAD <span>DRIVE</span></h1>
+    <p class="tag">A host was compromised and someone tried to cover their tracks. The disk, the registry, and the RAM are on your bench. Acquire it right, read the artifacts, catch the timestomp and the hidden process, and reconstruct exactly what happened — then write a report that holds up.</p>
+    <table class="ttable">${rows}</table>
+    <p class="legal">Six cases, roughly 60–90 minutes, each harder than the last. Pure defensive DFIR — acquire, analyze, attribute carefully, report. Move with <kbd>WASD</kbd>/<kbd>arrows</kbd>, examine with <kbd>E</kbd>/<kbd>Enter</kbd> (or the on-screen pad). Hints cost points.</p></div>
+    <div class="btnrow" style="justify-content:center">
+      <button class="btn primary" id="startBtn">${resume?'Resume examination →':'Open the case →'}</button>
+      ${resume?'<button class="btn" onclick="resetGame()">Start over</button>':''}</div></div>`);
+  $('#startBtn').onclick=()=>{running=true;S.started=true;save();closeOverlay();};
+}
+try{
+  const boot=async(data)=>{
+    if(academyEmbedded){
+      openOverlay('<div class="card pad"><p class="eyebrow">SAVED PROGRESS</p><h2>Loading your progress</h2><p>Your saved progress is loading from the Academy.</p></div>');
+      if(!await loadAcademyProgress()){
+        openOverlay('<div class="card pad"><p class="eyebrow">SAVED PROGRESS</p><h2>Could not load your progress</h2><p>Keep the game open and check your connection. Your saved progress has not been replaced.</p><button class="btn primary" id="retryAcademyProgress">Retry</button></div>');
+        $('#retryAcademyProgress').onclick=()=>boot(data);return;
+      }
+    }else if(data&&data.S){S=Object.assign(S,data.S);}
+    t0=performance.now()-(S.elapsed||0)*1000;
+    refreshHUD();fit();loop();if(S.started)running=true;else showTitle();
+    if(window.claude&&window.claude.hot&&window.claude.hot.snapshot)window.claude.hot.snapshot(()=>({S}));
+  };
+  if(window.claude&&window.claude.hot&&window.claude.hot.ready)window.claude.hot.ready(boot);
+  else boot((window.claude&&window.claude.hot&&window.claude.hot.data)||{});
+}catch(e){refreshHUD();fit();loop();showTitle();}
+</script>
