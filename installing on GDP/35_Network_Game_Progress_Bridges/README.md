@@ -1,0 +1,5 @@
+# Network game progress bridge update
+
+The live Academy received these assets on 28 October 2026. The update preserves game IDs and learner progress; the script validates original and candidate hashes and backs up the two originals before changing the files and catalog. It is specific to those IDs and exact original versions; adapt and test it before use elsewhere. The GDP fresh installer already includes the updated games, so do not run this script on a fresh installation.
+
+Both games opened in the live embedded player; isolated load/save/flush checks passed. Full gameplay, save and reopen acceptance remains pending. Production originals are retained at `/opt/uscc-academy/content/.network-game-bridge-backup`. If rollback is needed, restore the matching files and metadata together; do not restore the whole database solely for this update.

@@ -1,2 +1,3 @@
 *.sh text eol=lf
 "installing on GDP/34_Game_Progress_Bridges/*" -text
+"installing on GDP/35_Network_Game_Progress_Bridges/*" -text
