@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Register the three verified lab templates on a fresh Academy only."""
+"""Register the four verified lab templates on a fresh Academy only."""
 
 import argparse
 import json
@@ -17,7 +17,8 @@ from academy.proxmox import Proxmox
 
 
 EXPECTED = {"netlab": (9008, None, 28), "linux": (9105, None, 23),
-            "callback-troubleshooting": (9251, 9252, 10)}
+            "callback-troubleshooting": (9251, 9252, 10),
+            "docker-troubleshooting": (9200, None, 18)}
 FIELDS = {"title", "description", "kind", "template_id", "secondary_template_id",
           "cores", "memory", "enabled"}
 
@@ -28,9 +29,9 @@ def main():
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args()
     definitions = json.loads(args.catalogue.read_text(encoding="utf-8"))
-    if (not isinstance(definitions, list) or len(definitions) != 3 or
+    if (not isinstance(definitions, list) or len(definitions) != 4 or
             {entry["id"] for entry in definitions} != set(EXPECTED)):
-        raise ValueError("Expected exactly the three approved lab definitions")
+            raise ValueError("Expected exactly the four approved lab definitions")
     for entry in definitions:
         template_id, secondary, count = EXPECTED[entry["id"]]
         if (entry.get("template_id"), entry.get("secondary_template_id"), len(entry["drills"])) != (
@@ -57,7 +58,7 @@ def main():
             for entry in definitions:
                 proxmox.template_ready(Lab(template_id=entry["template_id"],
                                            secondary_template_id=entry.get("secondary_template_id")))
-            print("VALIDATED 3 templates: 9008 Netlab, 9105 Linux, 9251/9252 Callback")
+            print("VALIDATED 4 labs: 9008 Netlab, 9105 Linux, 9251/9252 Callback, 9200 Docker")
             if not args.apply:
                 print("DRY RUN ONLY; catalog unchanged")
                 return
@@ -72,7 +73,7 @@ def main():
                         setattr(lab, key, value)
                 db.add(Audit(user_id=users[0].id, action="import_fresh_lab", target=entry["id"]))
             db.commit()
-            print("PUBLISHED 3 labs; verify launch, isolation, grading and cleanup before handoff")
+            print("PUBLISHED 4 labs; verify launch, isolation, grading and cleanup before handoff")
     finally:
         engine.dispose()
 

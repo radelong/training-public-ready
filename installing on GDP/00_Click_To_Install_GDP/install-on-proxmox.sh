@@ -7,6 +7,12 @@ package_dir="$(dirname "$installer_dir")"
 content_dir="$package_dir/28_Fresh_Install_Content"
 templates_dir="$package_dir/29_Current_Lab_Templates"
 update_dir="$package_dir/33_Learning_Fixes_R3"
+admin_update_41_dir="$package_dir/41_Admin_Draft_Removal"
+admin_update_42_dir="$package_dir/42_Admin_Course_Purge"
+admin_update_43_dir="$package_dir/43_Admin_Course_Purge_Cache_Fix"
+docker_courses_dir="$package_dir/44_Docker_Replacement_Classes"
+docker_lab_dir="$package_dir/45_Docker_Troubleshooting_Lab"
+docker_lab_archive="$docker_lab_dir/docker-troubleshooting-package-r7.academy-lab.tar.gz"
 update_name=Training_Academy_App_Update_28_Learning_Fixes_2026-10-27_r3.tar.gz
 archive="$media_dir/training-academy-offline-amd64.tar.gz"
 provision_iso="$media_dir/academy-provision.iso"
@@ -24,11 +30,18 @@ pveversion | grep -Eq 'pve-manager/(9|[1-9][0-9])\.' || die 'This installer requ
 [[ -f "$templates_dir/fresh-labs.json" ]] || die 'Fresh lab catalog is missing.'
 [[ -f "$installer_dir/import-on-services.sh" ]] || die 'Services import script is missing.'
 [[ -f "$update_dir/$update_name" && -f "$update_dir/$update_name.sha256" ]] || die 'The current Academy application update is missing.'
+for current_update_dir in "$admin_update_41_dir" "$admin_update_42_dir" "$admin_update_43_dir"; do
+  [[ -f "$current_update_dir/SHA256SUMS.txt" ]] || die 'A current Academy administration update is missing.'
+done
+[[ -f "$docker_courses_dir/SHA256SUMS.txt" ]] || die 'Docker class bundle is missing.'
+[[ -f "$docker_lab_dir/SHA256SUMS" && -f "$docker_lab_archive" ]] || die 'Docker lab package is missing.'
 
 (cd "$media_dir" && sha256sum --check training-academy-offline-amd64.tar.gz.sha256 academy-provision.iso.sha256) || die 'Media checksum verification failed.'
 (cd "$content_dir" && sha256sum --check CONTENT-SHA256SUMS.txt) || die 'Protected content checksum verification failed.'
 (cd "$templates_dir/backups" && sha256sum --check academy-template-sha256sums.txt) || die 'Lab template checksum verification failed.'
 (cd "$update_dir" && sha256sum --check "$update_name.sha256") || die 'Academy application update checksum verification failed.'
+(cd "$docker_courses_dir" && sha256sum --check SHA256SUMS.txt) || die 'Docker class checksum verification failed.'
+(cd "$docker_lab_dir" && sha256sum --check SHA256SUMS) || die 'Docker lab package checksum verification failed.'
 test -c /dev/kvm && grep -Eq '(vmx|svm)' /proc/cpuinfo || die 'Nested KVM CPU features are not available.'
 vm_listing="$(qm list)"
 if grep -Eq '^[[:space:]]*[0-9]+[[:space:]]' <<< "$vm_listing"; then
@@ -50,13 +63,18 @@ tar -xzf "$archive" -C "$media_root"
 python3 "$media_root/scripts/verify-media.py" "$media_root" || die 'Extracted offline media failed verification.'
 python3 "$installer_dir/configure-site.py" "$media_root/deploy/site.example.json" "$media_root/scripts/validate-site.py" /root/gdp-site.json || die 'Site configuration was not accepted.'
 
-printf '\nThis will create private bridges, a restricted Proxmox service account, the Academy services VM, and restore four lab templates.\n'
+printf '\nThis will create private bridges, a restricted Proxmox service account, the Academy services VM, restore four lab templates, and build the Docker lab template.\n'
 printf 'The services VM runs both the website frontend and application backend.\n'
-printf 'It will import eleven classes, two 80-question assessments, six games, and three labs with fresh users and results.\n'
+printf 'It will import ten classes, two 80-question assessments, six games, and four labs with fresh users and results.\n'
 printf 'No existing VM or disk image will be modified.\n\n'
 
 ACADEMY_CURRENT_TEMPLATES=1 bash "$media_root/scripts/bootstrap-proxmox.sh" "$media_root" /root/gdp-site.json "$provision_iso"
 bash "$templates_dir/restore-templates.sh" "$templates_dir/backups" /root/academy-bootstrap/site.json
+install -d -m 700 /root/academy-bootstrap/docker-lab-package
+install -m 600 "$docker_lab_archive" /root/academy-bootstrap/docker-lab-package/docker-troubleshooting-package-r7.academy-lab.tar.gz
+bash "$media_root/scripts/install-lab-package.sh" \
+  /root/academy-bootstrap/docker-lab-package/docker-troubleshooting-package-r7.academy-lab.tar.gz \
+  /root/academy-bootstrap/site.json
 eval "$(python3 "$media_root/scripts/validate-site.py" /root/academy-bootstrap/site.json --shell)"
 guest_ip="${SITE_SERVICES_MANAGEMENT_IP%/*}"
 guest_key="$(qm guest exec "$SITE_SERVICES_VMID" -- /bin/cat /etc/ssh/ssh_host_ed25519_key.pub | python3 -c '
@@ -83,16 +101,22 @@ scp "${ssh_options[@]}" "$update_dir/$update_name" "$update_dir/$update_name.sha
   "learner@$guest_ip:/tmp/academy-fresh-import/"
 ssh "${ssh_options[@]}" "learner@$guest_ip" \
   "cd /tmp/academy-fresh-import && sha256sum --check '$update_name.sha256' && mkdir app-update && tar -xzf '$update_name' -C app-update && sudo bash app-update/academy-update/scripts/install-app-update.sh /tmp/academy-fresh-import/app-update/academy-update"
-scp "${ssh_options[@]}" "$package_dir/37_Docker_Class_Filter/install-filter.py" "learner@$guest_ip:/tmp/academy-fresh-import/"
-ssh "${ssh_options[@]}" "learner@$guest_ip" 'sudo python3 /tmp/academy-fresh-import/install-filter.py'
 scp "${ssh_options[@]}" -r -p "$content_dir" \
+  "$docker_courses_dir" \
   "$templates_dir/fresh-labs.json" \
   "$installer_dir/import-classes.py" \
   "$installer_dir/import-fresh-extras.py" \
   "$installer_dir/import-fresh-labs.py" \
   "$installer_dir/import-on-services.sh" \
   "learner@$guest_ip:/tmp/academy-fresh-import/"
+for update_dir in "$admin_update_41_dir" "$admin_update_42_dir" "$admin_update_43_dir"; do
+  archive="$(find "$update_dir" -maxdepth 1 -type f -name '*.tar.gz' -print -quit)"
+  [[ -s "$archive" && -s "$archive.sha256" ]] || die "Application update archive or checksum is missing: $update_dir"
+  remote_dir="/tmp/academy-fresh-import/$(basename "$update_dir")"
+  ssh "${ssh_options[@]}" "learner@$guest_ip" "mkdir -m 700 -p '$remote_dir'"
+  scp "${ssh_options[@]}" "$archive" "$archive.sha256" "learner@$guest_ip:$remote_dir/"
+done
 ssh "${ssh_options[@]}" "learner@$guest_ip" \
   'sudo bash /tmp/academy-fresh-import/import-on-services.sh /tmp/academy-fresh-import'
 printf '\nFresh Academy install complete. Retrieve the initial administrator password from the services VM console.\n'
-printf 'Accept the local CA on approved LAN devices, test all three labs, then enable learner access.\n'
+printf 'Accept the local CA on approved LAN devices, test all four labs, then enable learner access.\n'
