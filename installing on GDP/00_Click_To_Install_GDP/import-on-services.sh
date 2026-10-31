@@ -44,7 +44,7 @@ from pathlib import Path, PurePosixPath
 archive_path, target = map(Path, sys.argv[1:])
 with tarfile.open(archive_path, 'r:gz') as archive:
     members = archive.getmembers()
-    if len(members) != 48:
+    if len(members) != 53:
         raise SystemExit('Unexpected class archive member count')
     for member in members:
         path = PurePosixPath(member.name)
@@ -113,7 +113,7 @@ engine, factory = database(Settings().database_url)
 with factory() as db:
     count = lambda model: db.scalar(select(func.count()).select_from(model))
     assert count(User) == 1 and db.scalar(select(User.role)) == 'admin'
-    assert count(Course) == 10
+    assert count(Course) == 11
     assert count(AcademyAssessmentQuestion) == 160
     assert count(LearningGame) == 6
     assert {lab.id for lab in db.scalars(select(Lab))} == {
@@ -128,4 +128,4 @@ with factory() as db:
 print('FRESH_INSTALL_CONTENT_VERIFIED')
 engine.dispose()
 PY
-echo 'Ten learner classes, two 80-question assessments, six games and four labs imported.'
+echo 'Eleven learner classes, two 80-question assessments, six games and four labs imported.'
