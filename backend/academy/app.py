@@ -25,7 +25,8 @@ from .db import (database, allocation_lock, User, Login, LoginFailure, Lab, LabS
 from .db import BugReport, LearningGame, LearningGameProgress
 from .security import password_hash, password_ok, digest, decrypt_key, guac_data
 from . import agreement
-from .videos import catalogue as video_catalogue, add_watched_range, watched_seconds
+from .videos import (catalogue as video_catalogue, lab_guide_path,
+                     add_watched_range, watched_seconds)
 
 
 class Credentials(BaseModel):
@@ -420,6 +421,14 @@ def create_app(settings=None, provider=None):
                             "watched_percent": min(100, round(100 * watched_seconds(
                                 json.loads(progress[item.id].watched_json)) / progress[item.id].duration))
                             if item.id in progress else 0} for item in (items or [])]}
+
+    @app.api_route("/api/lab-guide/stream", methods=["GET", "HEAD"])
+    def lab_guide_stream(auth=Depends(identity)):
+        path = lab_guide_path(s.video_root)
+        if path is None:
+            raise HTTPException(503, "Lab guide video is unavailable")
+        return FileResponse(path, media_type="video/mp4", filename=path.name,
+                            content_disposition_type="inline")
 
     @app.put("/api/admin/videos/order")
     def reorder_videos(body: VideoOrderUpdate, auth=Depends(administrator), db=Depends(get_db)):

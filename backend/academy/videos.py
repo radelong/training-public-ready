@@ -6,6 +6,23 @@ from hashlib import sha256
 from pathlib import Path
 
 
+LAB_GUIDE_RELATIVE_PATH = Path(".academy") / "lab-guide.mp4"
+
+
+def lab_guide_path(root_path: str) -> Path | None:
+    """Return the fixed lab-guide asset from the mounted video share."""
+    root = Path(root_path)
+    folder = root / LAB_GUIDE_RELATIVE_PATH.parent
+    video = root / LAB_GUIDE_RELATIVE_PATH
+    try:
+        if (not root.is_dir() or folder.is_symlink() or not folder.is_dir()
+                or video.is_symlink() or not video.is_file()):
+            return None
+        return video
+    except OSError:
+        return None
+
+
 @dataclass(frozen=True)
 class Video:
     id: str

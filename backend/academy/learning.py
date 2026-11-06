@@ -13,7 +13,7 @@ from urllib.parse import unquote
 from fastapi import Depends, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field, model_validator, ValidationError
-from sqlalchemy import select, func
+from sqlalchemy import select, func, delete
 from .db import (Course, CourseVersion, ContentAsset, CourseProgress, ModuleQuizAttempt, ProgressTestAttempt, ExamAttempt,
                  AcademyAssessmentAttempt, AcademyAssessmentQuestion, ExamReset, Lab, LearningGame, User, Audit,
                  allocation_lock, uid)
@@ -101,6 +101,7 @@ class CourseContent(BaseModel):
     category: Literal["Networking", "Security", "Linux", "Programming", "Cloud", "AI", "Other"] | None = None
     modules: list[Module] = Field(default_factory=list, max_length=100)
     progress_test_enabled: bool = False
+    pretest_questions: list[Question] = Field(default_factory=list, max_length=200)
     exam: Exam = Field(default_factory=Exam)
 
     @model_validator(mode="after")
@@ -108,17 +109,33 @@ class CourseContent(BaseModel):
         for collection in (self.modules, self.exam.questions):
             if len({v.id for v in collection}) != len(collection):
                 raise ValueError("Module and question IDs must be unique within their lists")
-        progress_questions = [q for module in self.modules for q in module.quiz]
+        module_questions = [q for module in self.modules for q in module.quiz]
         if self.progress_test_enabled:
-            if len({q["id"] for q in progress_questions}) != len(progress_questions):
-                raise ValueError("Pretest question IDs must be unique across the class")
-            exam_prompts = {" ".join(q.prompt.casefold().split()) for q in self.exam.questions}
-            if any(" ".join(q["prompt"].casefold().split()) in exam_prompts for q in progress_questions):
-                raise ValueError("Pretest questions must differ from final exam questions")
-            if any(len(module.quiz) < 8 for module in self.modules):
-                raise ValueError("Add at least eight pretest questions to every module")
-            if len(progress_questions) > 200:
-                raise ValueError("A class pretest can contain at most 200 questions")
+            if self.pretest_questions:
+                if any(question.type == "written" for question in self.pretest_questions):
+                    raise ValueError("Opening pretest questions must be automatically graded")
+                if len({question.id for question in self.pretest_questions}) != len(self.pretest_questions):
+                    raise ValueError("Opening pretest question IDs must be unique")
+                pretest_prompts = {normalized_question_prompt(question.prompt)
+                                   for question in self.pretest_questions}
+                other_prompts = {normalized_question_prompt(question["prompt"])
+                                 for question in module_questions}
+                other_prompts.update(normalized_question_prompt(question.prompt)
+                                     for question in self.exam.questions)
+                if pretest_prompts & other_prompts:
+                    raise ValueError("Opening pretest questions must differ from module quizzes and final exam")
+            else:
+                if len({q["id"] for q in module_questions}) != len(module_questions):
+                    raise ValueError("Pretest question IDs must be unique across the class")
+                exam_prompts = {" ".join(q.prompt.casefold().split()) for q in self.exam.questions}
+                if any(" ".join(q["prompt"].casefold().split()) in exam_prompts for q in module_questions):
+                    raise ValueError("Pretest questions must differ from final exam questions")
+                if any(len(module.quiz) < 8 for module in self.modules):
+                    raise ValueError("Add at least eight pretest questions to every module")
+                if len(module_questions) > 200:
+                    raise ValueError("A class pretest can contain at most 200 questions")
+        elif self.pretest_questions:
+            raise ValueError("Enable the class pretest before adding opening pretest questions")
         if not self.title.strip():
             raise ValueError("A class title is required")
         return self
@@ -127,6 +144,13 @@ class CourseContent(BaseModel):
 class DraftWrite(BaseModel):
     revision: int = Field(ge=1)
     content: CourseContent
+
+
+class PurgeCourseWrite(BaseModel):
+    confirmation: str = Field(min_length=1, max_length=200)
+    version_ids: list[str] = Field(max_length=100)
+    counts: dict[str, int]
+    asset_ids: list[str] = Field(max_length=500)
 
 
 class ProgressWrite(BaseModel):
@@ -238,6 +262,9 @@ def learner_content(content):
         module["quiz"] = [
             {k: q[k] for k in ("id", "type", "prompt", "choices", "points")}
             for q in module.get("quiz", [])]
+    content["pretest_questions"] = [
+        {k: q[k] for k in ("id", "type", "prompt", "choices", "points")}
+        for q in content.get("pretest_questions", [])]
     content["exam"]["questions"] = [
         {k: q[k] for k in ("id", "type", "prompt", "choices", "points")}
         for q in content["exam"]["questions"]]
@@ -442,12 +469,76 @@ def mount_learning(app, factory, settings, identity, administrator, get_db):
         if publishing and any(not question.get("explanation", "").strip()
                               for module in content.modules for question in module.quiz):
             raise HTTPException(422, "Add an explanation for every module question before publishing")
-        if publishing and content.progress_test_enabled and any(len(module.quiz) < 8 for module in content.modules):
+        if (publishing and content.progress_test_enabled and not content.pretest_questions
+                and any(len(module.quiz) < 8 for module in content.modules)):
             raise HTTPException(422, "Add at least eight pretest questions to every module before publishing")
 
-    def draft_view(c):
+    def draft_view(c, can_delete=False, can_purge=False):
         return {"id": c.id, "revision": c.revision, "published_id": c.published_id,
+                "can_delete": can_delete, "can_purge": can_purge,
                 "content": json.loads(c.draft_json)}
+
+    def course_asset_ids(content):
+        return {module.get("asset_id") for module in content.get("modules", [])
+                if module.get("asset_id")}
+
+    def unused_course_assets(db, deleting_course_id, candidates, deleting_version_ids=()):
+        retained = set()
+        complete = True
+        for row in db.scalars(select(Course).where(Course.id != deleting_course_id)):
+            try:
+                retained.update(course_asset_ids(json.loads(row.draft_json)))
+            except (TypeError, ValueError):
+                complete = False
+        versions = select(CourseVersion)
+        if deleting_version_ids:
+            versions = versions.where(CourseVersion.id.not_in(deleting_version_ids))
+        for row in db.scalars(versions):
+            try:
+                retained.update(course_asset_ids(json.loads(row.content_json)))
+            except (TypeError, ValueError):
+                complete = False
+        return candidates - retained if complete else set()
+
+    def course_purge_preview(db, row):
+        versions = list(db.scalars(select(CourseVersion).where(
+            CourseVersion.course_id == row.id).order_by(CourseVersion.number)))
+        if not versions:
+            raise HTTPException(409, "This class has no published history to purge. Delete its draft instead.")
+        version_ids = [version.id for version in versions]
+        try:
+            candidates = course_asset_ids(json.loads(row.draft_json))
+            reset_scopes = set()
+            for version in versions:
+                content = json.loads(version.content_json)
+                candidates.update(course_asset_ids(content))
+                reset_scopes.update({f"pretest:{version.id}", f"final:{version.id}"})
+                reset_scopes.update(f"quiz:{version.id}:{module['id']}" for module in content.get("modules", []))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(409, "Class history is malformed; purge is blocked for a safe manual review.") from exc
+        removable_assets = unused_course_assets(db, row.id, candidates, version_ids)
+        ids = [version.id for version in versions]
+        counts = {
+            "versions": len(versions),
+            "course_progress": db.scalar(select(func.count()).select_from(CourseProgress).where(
+                CourseProgress.version_id.in_(ids))) or 0,
+            "module_quiz_attempts": db.scalar(select(func.count()).select_from(ModuleQuizAttempt).where(
+                ModuleQuizAttempt.version_id.in_(ids))) or 0,
+            "opening_pretest_attempts": db.scalar(select(func.count()).select_from(ProgressTestAttempt).where(
+                ProgressTestAttempt.version_id.in_(ids))) or 0,
+            "final_exam_attempts": db.scalar(select(func.count()).select_from(ExamAttempt).where(
+                ExamAttempt.version_id.in_(ids))) or 0,
+            "retake_reset_markers": db.scalar(select(func.count()).select_from(ExamReset).where(
+                ExamReset.scope.in_(reset_scopes))) or 0,
+            "slide_assets_removed": len(removable_assets),
+        }
+        affected = set()
+        for model in (CourseProgress, ModuleQuizAttempt, ProgressTestAttempt, ExamAttempt):
+            affected.update(db.scalars(select(model.user_id).where(model.version_id.in_(ids))))
+        return {"course_id": row.id, "title": json.loads(row.draft_json)["title"],
+                "version_ids": version_ids, "counts": counts,
+                "asset_ids": sorted(removable_assets), "unique_learners_affected": len(affected),
+                "audit_records": "preserved"}
 
     def attempt_view(db, a, user):
         content = content_of(db.get(CourseVersion, a.version_id))
@@ -536,6 +627,8 @@ def mount_learning(app, factory, settings, identity, administrator, get_db):
             "recommendations": json.loads(attempt.recommendations_json)}
 
     def progress_questions(content):
+        if content.get("pretest_questions"):
+            return [(None, question) for question in content["pretest_questions"]]
         return [(module, question) for module in content["modules"]
                 for question in module.get("quiz", [])]
 
@@ -543,7 +636,8 @@ def mount_learning(app, factory, settings, identity, administrator, get_db):
         content = content_of(db.get(CourseVersion, attempt.version_id))
         pairs = progress_questions(content)
         questions = [{**{k: q[k] for k in ("id", "type", "prompt", "choices", "points")},
-                      "module_id": module["id"], "module_title": module["title"]}
+                      "module_id": module["id"] if module else "",
+                      "module_title": module["title"] if module else "Opening pre-exam"}
                      for module, q in pairs]
         result = {"id": attempt.id, "version_id": attempt.version_id, "status": attempt.status,
                   "score": attempt.score, "answers": json.loads(attempt.answers_json),
@@ -620,7 +714,10 @@ def mount_learning(app, factory, settings, identity, administrator, get_db):
 
     @app.get("/api/admin/courses")
     def drafts(auth=Depends(administrator), db=Depends(get_db)):
-        return [draft_view(c) for c in db.scalars(select(Course).order_by(Course.created.desc()))]
+        rows = list(db.scalars(select(Course).order_by(Course.created.desc())))
+        versioned = set(db.scalars(select(CourseVersion.course_id).distinct()))
+        return [draft_view(c, c.published_id is None and c.id not in versioned, c.id in versioned)
+                for c in rows]
 
     @app.post("/api/admin/courses")
     def create_class(body: CourseContent, auth=Depends(administrator), db=Depends(get_db)):
@@ -628,11 +725,13 @@ def mount_learning(app, factory, settings, identity, administrator, get_db):
         c = Course(draft_json=body.model_dump_json())
         db.add(c); db.flush()
         audit(db, auth[0], "create_class", c.id); db.commit()
-        return draft_view(c)
+        return draft_view(c, True)
 
     @app.get("/api/admin/courses/{cid}")
     def get_draft(cid: str, auth=Depends(administrator), db=Depends(get_db)):
-        return draft_view(course(db, cid))
+        row = course(db, cid)
+        has_versions = db.scalar(select(CourseVersion.id).where(CourseVersion.course_id == cid).limit(1))
+        return draft_view(row, row.published_id is None and has_versions is None, has_versions is not None)
 
     @app.put("/api/admin/courses/{cid}")
     def save_draft(cid: str, body: DraftWrite, auth=Depends(administrator), db=Depends(get_db)):
@@ -643,7 +742,79 @@ def mount_learning(app, factory, settings, identity, administrator, get_db):
         validate_references(db, body.content)
         c.draft_json, c.revision = body.content.model_dump_json(), c.revision + 1
         audit(db, auth[0], "save_class", c.id); db.commit()
-        return draft_view(c)
+        has_versions = db.scalar(select(CourseVersion.id).where(CourseVersion.course_id == cid).limit(1))
+        return draft_view(c, c.published_id is None and has_versions is None, has_versions is not None)
+
+    @app.delete("/api/admin/courses/{cid}")
+    def delete_draft(cid: str, auth=Depends(administrator), db=Depends(get_db)):
+        allocation_lock(db)
+        row = course(db, cid)
+        has_versions = db.scalar(select(CourseVersion.id).where(CourseVersion.course_id == cid).limit(1))
+        if row.published_id is not None or has_versions is not None:
+            raise HTTPException(409, "Published class history cannot be deleted. Unpublish it to hide it from learners.")
+        candidates = course_asset_ids(json.loads(row.draft_json))
+        removable = unused_course_assets(db, cid, candidates)
+        assets = [db.get(ContentAsset, aid) for aid in removable]
+        paths = [folder / f"{asset.id}.pdf" for asset in assets if asset]
+        audit(db, auth[0], "delete_class_draft", row.id)
+        db.delete(row)
+        for asset in assets:
+            if asset:
+                db.delete(asset)
+        db.commit()
+        for path in paths:
+            try:
+                if path.parent.resolve() == folder.resolve():
+                    path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        return {"message": "Draft deleted. Published history and shared slide files were preserved."}
+
+    @app.get("/api/admin/courses/{cid}/purge-preview")
+    def preview_course_purge(cid: str, auth=Depends(administrator), db=Depends(get_db)):
+        return course_purge_preview(db, course(db, cid))
+
+    @app.post("/api/admin/courses/{cid}/purge")
+    def purge_course(cid: str, body: PurgeCourseWrite, auth=Depends(administrator), db=Depends(get_db)):
+        allocation_lock(db)
+        row = course(db, cid)
+        preview = course_purge_preview(db, row)
+        if body.confirmation != f"DELETE {preview['title']}":
+            raise HTTPException(422, f"Type DELETE {preview['title']} exactly to confirm this purge.")
+        if (body.version_ids != preview["version_ids"] or body.counts != preview["counts"]
+                or body.asset_ids != preview["asset_ids"]):
+            raise HTTPException(409, "Class history or linked records changed. Reload the purge preview before continuing.")
+        ids = preview["version_ids"]
+        reset_scopes = set()
+        for version in db.scalars(select(CourseVersion).where(CourseVersion.id.in_(ids))):
+            content = json.loads(version.content_json)
+            reset_scopes.update({f"pretest:{version.id}", f"final:{version.id}"})
+            reset_scopes.update(f"quiz:{version.id}:{module['id']}" for module in content.get("modules", []))
+        assets = [db.get(ContentAsset, aid) for aid in preview["asset_ids"]]
+        paths = [folder / f"{asset.id}.pdf" for asset in assets if asset]
+        for model in (CourseProgress, ModuleQuizAttempt, ProgressTestAttempt, ExamAttempt):
+            db.execute(delete(model).where(model.version_id.in_(ids)))
+        if reset_scopes:
+            db.execute(delete(ExamReset).where(ExamReset.scope.in_(reset_scopes)))
+        db.execute(delete(CourseVersion).where(CourseVersion.id.in_(ids)))
+        db.delete(row)
+        for asset in assets:
+            if asset:
+                db.delete(asset)
+        audit(db, auth[0], "purge_class_history", cid)
+        db.commit()
+        missing_files = []
+        for path in paths:
+            try:
+                if path.parent.resolve() == folder.resolve():
+                    path.unlink(missing_ok=True)
+                else:
+                    missing_files.append(path.name)
+            except OSError:
+                missing_files.append(path.name)
+        return {"message": f"Permanently removed {preview['title']} and its published history.",
+                "removed": preview["counts"], "unique_learners_affected": preview["unique_learners_affected"],
+                "audit_record": "preserved", "slide_files_not_removed": missing_files}
 
     @app.post("/api/admin/courses/{cid}/publish")
     def publish(cid: str, body: dict, auth=Depends(administrator), db=Depends(get_db)):
@@ -916,7 +1087,8 @@ def mount_learning(app, factory, settings, identity, administrator, get_db):
         if not content.get("progress_test_enabled"):
             raise HTTPException(404, "This class has no pretest")
         pairs = progress_questions(content)
-        if not pairs or any(len(module.get("quiz", [])) < 8 for module in content["modules"]):
+        if (not pairs or (not content.get("pretest_questions") and
+                          any(len(module.get("quiz", [])) < 8 for module in content["modules"]))):
             raise HTTPException(409, "The class pretest is not configured for every module")
         attempts = [item for item in db.scalars(select(ProgressTestAttempt).where(
             ProgressTestAttempt.version_id == vid, ProgressTestAttempt.user_id == auth[0].id)
@@ -953,15 +1125,16 @@ def mount_learning(app, factory, settings, identity, administrator, get_db):
         marks = {q["id"]: q["points"] if answers[q["id"]] == q["correct"] else 0 for q in questions}
         module_results = {}
         completed = set(json.loads(progress(db, attempt.version_id, auth[0]).completed_json))
-        for module in content["modules"]:
-            module_questions = module["quiz"]
-            earned = sum(marks[q["id"]] for q in module_questions)
-            possible = sum(q["points"] for q in module_questions)
-            perfect = earned == possible
-            module_results[module["id"]] = {"score": round(earned * 100 / possible, 2),
-                                             "question_count": len(module_questions), "perfect": perfect}
-            if perfect:
-                completed.add(module["id"])
+        if not content.get("pretest_questions"):
+            for module in content["modules"]:
+                module_questions = module["quiz"]
+                earned = sum(marks[q["id"]] for q in module_questions)
+                possible = sum(q["points"] for q in module_questions)
+                perfect = earned == possible
+                module_results[module["id"]] = {"score": round(earned * 100 / possible, 2),
+                                                 "question_count": len(module_questions), "perfect": perfect}
+                if perfect:
+                    completed.add(module["id"])
         p = progress(db, attempt.version_id, auth[0])
         p.completed_json = json.dumps(sorted(completed))
         attempt.answers_json = json.dumps(answers); attempt.marks_json = json.dumps(marks)
