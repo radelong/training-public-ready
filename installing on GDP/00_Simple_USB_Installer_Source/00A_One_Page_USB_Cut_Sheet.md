@@ -1,6 +1,6 @@
 # GDP Training Academy USB install
 
-**Before you start:** Proxmox VE 9 must already be installed on a dedicated, empty server. Use a 32 GB or larger **exFAT** USB drive labelled **ACADEMY**. Copy the entire **GDP Installer** folder onto it. FAT32 cannot hold the package files.
+**Before you start:** Proxmox VE 9 must already be installed on a dedicated, empty server. Use a 32 GB or larger **exFAT** USB drive labelled **ACADEMY** by default. If you use another label, keep it and replace `ACADEMY` in the mount path with the exact label from `lsblk -f`. Copy the entire **GDP Installer** folder onto it. FAT32 cannot hold the package files.
 
 1. **Connect the USB drive.** On another computer, open the new server's Proxmox web interface. Select the server node, open **Shell**, and sign in as root.
 
@@ -22,7 +22,7 @@
 
 5. **Make the website reachable.** On the LAN DNS server or router used by learner computers, add an **A record** from your website name to the Proxmox LAN IP in the receipt. The installer cannot change your router or DNS server.
 
-6. **Trust the site certificate on each learner computer.** Copy `/root/academy-install/academy-ca.crt` from Proxmox and install that **public CA certificate** in the computer's trusted root store. Compare the Proxmox SSH fingerprint before copying it. The detailed `README.md` gives exact Windows commands. Never copy a `.key` file or bypass a browser certificate warning.
+6. **Trust the site certificate on each Ubuntu PC.** Compare the Proxmox SSH fingerprint; copy `academy-ca.crt` with `scp`; compare `sha256sum`; then run `sudo install -o root -g root -m 0644 academy-ca.crt /usr/local/share/ca-certificates/academy-ca.crt` and `sudo update-ca-certificates`. Restart the browser. The detailed `README.md` covers Firefox if it still warns. Never copy a `.key` file or bypass a certificate warning.
 
 7. **Sign in and check the Academy.** In the Proxmox shell, run the following command. Read the username and password from its `out-data` field, then sign in at your website name. Change the administrator password, create learner accounts, and follow the acceptance record before admitting learners.
 

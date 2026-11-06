@@ -15,7 +15,7 @@ This guide lists messages produced by the current installer and the safest next 
 
 ## 1. USB drive is not found or will not mount
 
-The USB must be labelled `ACADEMY`, formatted as exFAT, and contain the complete `GDP Installer` folder. Do not use FAT32: it cannot store the large package files.
+The default USB label is `ACADEMY`. A different label also works: check its exact spelling with `lsblk -f` and use that exact value in `/dev/disk/by-label/<LABEL>`. Keep exFAT and the complete `GDP Installer` folder. Do not use FAT32: it cannot store the large package files.
 
 Run these read-only checks in the Proxmox root shell:
 
@@ -263,20 +263,14 @@ qm guest exec 9000 -- /bin/bash -lc 'cd /opt/training-academy && docker compose 
 
 | Symptom | Fix |
 | --- | --- |
-| Browser says the hostname cannot be found | Add the LAN DNS A record shown in the receipt: website hostname to the Proxmox LAN IP. Then on Windows run `Resolve-DnsName YOUR_HOSTNAME`. Do not use a public DNS or Cloudflare tunnel for this LAN-only install. |
-| Browser reports a certificate warning | Copy `/root/academy-install/academy-ca.crt` from Proxmox and install that public CA on the client using Guide 01. Confirm the hostname matches the receipt. Never click through the warning. |
-| DNS resolves, but the connection times out | From the client run `Test-NetConnection YOUR_HOSTNAME -Port 443`. Check Proxmox's LAN bridge, services VM status, and permitted LAN subnet in the installer summary. Do not open Proxmox port 8006 to learners. |
+| Browser says the hostname cannot be found | Add the LAN DNS A record shown in the receipt: website hostname to the Proxmox LAN IP. Then on an Ubuntu learner PC run `getent ahosts YOUR_HOSTNAME` and confirm it returns the Proxmox LAN IP from the receipt. Do not use public DNS or Cloudflare tunnel for this LAN-only install. |
+| Browser reports a certificate warning | On Ubuntu, follow Guide 01 to compare the SSH fingerprint and SHA-256, install the CA with `sudo update-ca-certificates`, and restart the browser. If Firefox still warns, import the CA under its Authorities settings. Confirm the hostname matches the receipt. Never click through the warning. |
+| DNS resolves, but the connection times out | On Ubuntu, run `nc -vz YOUR_HOSTNAME 443` if netcat is installed. Check Proxmox's LAN bridge, services VM status, and permitted LAN subnet in the installer summary. Do not open Proxmox port 8006 to learners. |
 | Website returns `502` or `503` | Check `docker compose ps`, then read only the unhealthy service logs using the commands in section 8. Preserve the logs and do not recreate containers or restore a database without a maintainer's plan. |
 | Sign-in page appears but initial login fails | Retrieve the one-time login from the services VM as shown in Guide 01. Change the password after first sign-in. Never paste the password into a log or support message. |
 
 ## 10. If you need help
 
-Send the maintainer these details privately:
+Send the maintainer these details privately: launch method; whether you typed `yes`; exact `state` and `step`; first error and last 80 lines of `install.log`; output of `qm list` and `pvesm status`.
 
-1. Which launch method you used: direct USB or Windows transfer.
-2. The exact `state` and `step` values.
-3. The first error and the last 80 lines of `install.log`.
-4. Output of `qm list`, `pvesm status`, and `systemctl status academy-install.service --no-pager`.
-5. Whether you had already typed `yes`.
-
-Redact passwords, tokens, private keys, and any learner data. Keep the full logs and failed VM on the server until the maintainer gives you a written recovery plan.
+Redact passwords, tokens, private keys, and learner data. Keep full logs and the failed VM on the server until the maintainer provides a written recovery plan.

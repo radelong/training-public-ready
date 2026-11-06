@@ -6,3 +6,8 @@ The complete USB package and its 59-file checksum manifest are distributed throu
 
 
 The standalone installation troubleshooting guide is included as Markdown and PDF. It documents safe install-step diagnostics and stop points without including offline media or deployment credentials.
+
+
+The installation guide now includes Ubuntu learner-PC DNS and certificate trust steps. The public copy contains only generic documentation and tooling; offline media, credentials, private answer keys, learner records and lab disks remain excluded.
+
+The Ubuntu learner-client troubleshooting PDF is named INSTALL-TROUBLESHOOTING-UBUNTU.pdf.

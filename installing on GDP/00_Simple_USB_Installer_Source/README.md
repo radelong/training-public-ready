@@ -6,7 +6,7 @@ This package installs the website, backend, database, browser terminals, eleven 
 
 ## Install from a USB drive
 
-1. **Prepare the drive.** Use a **32 GB or larger exFAT USB drive** labelled **ACADEMY**. Formatting erases a drive, so save its existing files first. Copy the entire **GDP Installer** folder onto it. FAT32 cannot hold the large files. Copying only the launcher will not work.
+1. **Prepare the drive.** Use a **32 GB or larger exFAT USB drive** labelled **ACADEMY** by default. If the drive has another label, keep it and use that exact label in the mount path after checking `lsblk -f`. Formatting erases a drive, so save its existing files first. Copy the entire **GDP Installer** folder onto it. FAT32 cannot hold the large files. Copying only the launcher will not work.
 2. **Plug it into the Proxmox server.** Proxmox VE 9 must already be installed. Use a dedicated, empty, standalone node with no VMs or containers. Open **Proxmox web interface → your node → Shell** and sign in as root.
 3. **Paste this whole block into the shell:**
 
@@ -22,38 +22,59 @@ This package installs the website, backend, database, browser terminals, eleven 
 
 ## First sign-in
 
-1. **Add one LAN DNS A record.** Map the website name to the Proxmox IP shown in the completion receipt. Make this change on the DNS server/router your learner computers use. The installer has no credentials for that device, so it cannot make the DNS change itself. No public DNS or Cloudflare tunnel is needed. Learner computers must be on the permitted LAN subnet shown in the summary.
-2. **Trust the Academy certificate on learner computers.** On a Windows administrator PC, copy the public CA certificate:
+1. **Add one LAN DNS A record.** Map the website hostname to the Proxmox IP shown in the completion receipt on the DNS server/router used by the Ubuntu learner PCs. The installer cannot change that device. No public DNS or Cloudflare tunnel is needed. Learner PCs must be on the permitted LAN subnet in the installer summary. On an Ubuntu learner PC, verify the name resolves to the receipt IP:
 
-   ```powershell
+   ```sh
+   getent ahosts academy.training.internal
+   ```
+
+   Replace the example with the hostname in your receipt. If it returns no address or the wrong address, correct the LAN DNS A record before proceeding.
+
+2. **Trust the Academy certificate on each Ubuntu learner PC.** On the Proxmox root shell, record the SSH fingerprint and CA file checksum:
+
+   ```sh
+   ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
+   sha256sum /root/academy-install/academy-ca.crt
+   ```
+
+   On each Ubuntu PC, copy the public CA certificate. Replace `PROXMOX_LAN_IP` with the receipt IP:
+
+   ```sh
    scp root@PROXMOX_LAN_IP:/root/academy-install/academy-ca.crt .
    ```
 
-   Replace `PROXMOX_LAN_IP` with the IP from the receipt. If SSH asks you to accept a fingerprint, first compare it with `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` in the Proxmox root shell. The SHA256 values must match.
+   At the first SSH prompt, compare the offered SHA256 fingerprint with the Proxmox fingerprint above. Stop if it differs. Then compare the local checksum with the Proxmox checksum:
 
-   Compare `Get-FileHash .\academy-ca.crt` on Windows with `sha256sum /root/academy-install/academy-ca.crt` on Proxmox. Then open PowerShell **as administrator** in the downloaded certificate's folder and run:
-
-   ```powershell
-   Import-Certificate -FilePath .\academy-ca.crt -CertStoreLocation Cert:\LocalMachine\Root
+   ```sh
+   sha256sum academy-ca.crt
    ```
 
-   Repeat certificate trust on other learner computers, or have your IT administrator distribute that same CA. Copy only the `.crt` file, never a `.key` file. Do not bypass browser certificate warnings.
+   Install the verified public CA into Ubuntu's system trust store:
+
+   ```sh
+   sudo install -o root -g root -m 0644 academy-ca.crt /usr/local/share/ca-certificates/academy-ca.crt
+   sudo update-ca-certificates
+   ```
+
+   Restart the browser and open the exact hostname from the receipt. If Firefox still reports an untrusted issuer, open **Settings → Privacy & Security → Certificates → View Certificates → Authorities → Import**, select `academy-ca.crt`, and enable **Trust this CA to identify websites**. Restart Firefox. Never bypass a certificate warning. Copy only the `.crt` file, never a `.key` file.
+
 3. **Read the initial login in the Proxmox root shell:**
 
    ```sh
    qm guest exec 9000 -- /bin/cat /opt/training-academy/secrets/initial-admin.txt
    ```
 
-   The username and password appear in the output's `out-data` field. Open the website from the receipt, sign in, and change the administrator password in **Administration**. Create learner accounts there. Keep the login details private.
+   The username and password appear in the output's `out-data` field. Sign in using the receipt hostname and change the administrator password in **Administration**. Create learner accounts there. Keep the login details private.
+
 4. **Check the new site before admitting learners.** Open classes and games. Launch and end each lab; confirm both Callback panes show different hosts and accept input. Check exercise feedback and grading, and verify two learners receive separate environments. You can adjust lab VM settings in Administration.
+
 5. **Remove the USB safely** after installation has completed:
 
    ```sh
    umount /mnt/academy
    ```
 
-The DNS record and workstation certificate trust are the two external setup tasks. The package automatically installs and configures the Academy itself.
-
+The LAN DNS record and Ubuntu client certificate trust are the two external setup tasks. The package automatically installs and configures the Academy itself.
 ## Optional: double-click from Windows instead
 
 Leave the USB in a Windows PC on the new server's LAN and double-click **INSTALL-WINDOWS.cmd**. Windows OpenSSH Client must be installed. Enter the Proxmox IPv4 address, compare the SSH fingerprint as above, and enter the root password only when OpenSSH asks. Up to three password prompts are normal; the password is not saved.
@@ -85,4 +106,4 @@ VM defaults match the Academy: services 4 vCPUs / 8 GiB / 50 GiB; Netlab and Lin
 
 ## Installation troubleshooting
 
-[INSTALLATION-TROUBLESHOOTING-GUIDE.md](./INSTALLATION-TROUBLESHOOTING-GUIDE.md) gives step-by-step diagnostics, likely installer messages, safe corrective actions, and stop points for partial failures. A printable PDF is alongside it. These guides are documentation only; this public source folder does not contain the protected offline install media.
+[INSTALLATION-TROUBLESHOOTING-GUIDE.md](./INSTALLATION-TROUBLESHOOTING-GUIDE.md) gives step-by-step diagnostics, likely installer messages, safe corrective actions, and stop points for partial failures. The current Ubuntu-client PDF is `INSTALL-TROUBLESHOOTING-UBUNTU.pdf`. These guides are documentation only; this public source folder does not contain the protected offline install media.
