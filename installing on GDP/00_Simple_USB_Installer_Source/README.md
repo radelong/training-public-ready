@@ -81,3 +81,8 @@ The installer checks suitability automatically. Plan for at least 32 GB RAM, 250
 VM defaults match the Academy: services 4 vCPUs / 8 GiB / 50 GiB; Netlab and Linux 2 vCPUs / 4 GiB each; Callback 2 vCPUs / 4 GiB per VM; Docker 2 vCPUs / 8 GiB. Lab disks come from the included templates. This package does not resize the Proxmox host. SSD storage improves installation and lab startup speed.
 
 `VERIFY.ps1` checks the package on Windows. Both launch methods verify its hashes before installing. Keep the package as recovery media; do not share its protected course assets or answers publicly.
+
+
+## Installation troubleshooting
+
+[INSTALLATION-TROUBLESHOOTING-GUIDE.md](./INSTALLATION-TROUBLESHOOTING-GUIDE.md) gives step-by-step diagnostics, likely installer messages, safe corrective actions, and stop points for partial failures. A printable PDF is alongside it. These guides are documentation only; this public source folder does not contain the protected offline install media.
