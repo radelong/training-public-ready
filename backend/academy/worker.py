@@ -9,6 +9,104 @@ from .security import new_ssh_key, encrypt_key
 log = logging.getLogger("academy.worker")
 
 
+# .hushlogin hides the banner, but Ubuntu PAM still generates dynamic MOTD.
+# Keep authentication/session rules and skip only this slow informational update.
+_CALLBACK_MOTD_SETUP = r"""
+from pathlib import Path
+import os
+import stat
+import tempfile
+
+path = Path('/etc/pam.d/sshd')
+if path.is_symlink() or not path.is_file():
+    raise RuntimeError('Unexpected SSH PAM configuration')
+original = path.read_text()
+lines = original.splitlines(keepends=True)
+matches = []
+for index, line in enumerate(lines):
+    body = line.rstrip('\r\n')
+    head, separator, comment = body.partition('#')
+    tokens = head.split()
+    if tokens[:3] == ['session', 'optional', 'pam_motd.so'] and 'motd=/run/motd.dynamic' in tokens:
+        matches.append(index)
+        if 'noupdate' not in tokens:
+            ending = line[len(body):]
+            lines[index] = head.rstrip() + ' noupdate' + (' #' + comment if separator else '') + ending
+if len(matches) != 1:
+    raise RuntimeError('Unexpected dynamic MOTD configuration; no PAM rules were changed')
+updated = ''.join(lines)
+if updated != original:
+    backup = Path('/var/lib/academy-pair/ssh-pam-before-noupdate')
+    backup.parent.mkdir(parents=True, exist_ok=True)
+    if not backup.exists():
+        with backup.open('xb') as stream:
+            os.chmod(backup, 0o600)
+            stream.write(original.encode())
+            stream.flush()
+            os.fsync(stream.fileno())
+    mode = stat.S_IMODE(path.stat().st_mode)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', dir=path.parent, prefix='.sshd-academy-', delete=False) as stream:
+            temporary = Path(stream.name)
+            stream.write(updated)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(temporary, mode)
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None and temporary.exists():
+            temporary.unlink()
+print('CALLBACK_TERMINAL_READY')
+"""
+
+
+# The worker owns the barrier after both role setups finish. Older supported
+# template snapshots do not implement an `arm` guest-control subcommand.
+_CALLBACK_ARM_EXERCISE = r"""
+import ipaddress
+import json
+import sys
+import time
+from pathlib import Path
+
+drill, sender, listener = sys.argv[1:]
+ipaddress.ip_address(sender)
+ipaddress.ip_address(listener)
+if sender == listener:
+    raise RuntimeError('Sender and Listener addresses must differ')
+config = json.loads(Path('/etc/academy-pair/peer.json').read_text(encoding='utf-8'))
+if (config.get('role') != 'listener' or config.get('sender_ip') != sender
+        or config.get('listener_ip') != listener):
+    raise RuntimeError('Listener configuration does not match this learner pair')
+Path('/var/lib/academy-pair/heartbeats.jsonl').write_text('', encoding='utf-8')
+Path('/var/lib/academy-pair/state.json').write_text(
+    json.dumps({'exercise': drill, 'started_at': time.time()}) + '\n', encoding='utf-8')
+print('Exercise armed after both roles were configured; earlier heartbeats do not count.')
+"""
+
+
+def prepare_callback_terminal(provider, session, role):
+    code, _output = provider.exec(session, ["install", "-o", "learner", "-g", "learner",
+                                            "-m", "0644", "/dev/null",
+                                            "/home/learner/.hushlogin"], role=role)
+    if code != 0:
+        raise RuntimeError(f"Could not prepare the {role} terminal")
+    # Ubuntu 26.04 emits OSC 3008 shell context from profile.d.
+    # Guacamole displays that metadata as text and moves the cursor.
+    profile = ("printf '%s\\n' "
+               "'# Guacamole learner terminals do not use OSC 3008 context.' "
+               "'if [ \"${USER:-}\" = \"learner\" ]; then' "
+               "'    unset PROMPT_COMMAND PS0' "
+               "'fi' > /etc/profile.d/99-academy-terminal.sh")
+    code, _output = provider.exec(session, ["/bin/sh", "-c", profile], role=role)
+    if code != 0:
+        raise RuntimeError(f"Could not disable shell context on the {role} terminal")
+    code, _output = provider.exec(session, ["python3", "-c", _CALLBACK_MOTD_SETUP], role=role)
+    if code != 0:
+        raise RuntimeError(f"Could not prepare fast offline SSH login on the {role} VM")
+
+
 def execute_job(factory, settings, provider, job_id):
     with factory() as db:
         job = db.get(Job, job_id)
@@ -54,21 +152,7 @@ def execute_job(factory, settings, provider, job_id):
                         code, _output = provider.exec(session, pair_command, role=role)
                         if code != 0:
                             raise RuntimeError(f"Could not configure the paired heartbeat on the {role} VM")
-                        code, _output = provider.exec(session, ["install", "-o", "learner", "-g", "learner",
-                                                                "-m", "0644", "/dev/null",
-                                                                "/home/learner/.hushlogin"], role=role)
-                        if code != 0:
-                            raise RuntimeError(f"Could not prepare the {role} terminal")
-                        # Ubuntu 26.04 emits OSC 3008 shell context from profile.d.
-                        # Guacamole displays that metadata as text and moves the cursor.
-                        profile = ("printf '%s\\n' "
-                                   "'# Guacamole learner terminals do not use OSC 3008 context.' "
-                                   "'if [ \"${USER:-}\" = \"learner\" ]; then' "
-                                   "'    unset PROMPT_COMMAND PS0' "
-                                   "'fi' > /etc/profile.d/99-academy-terminal.sh")
-                        code, _output = provider.exec(session, ["/bin/sh", "-c", profile], role=role)
-                        if code != 0:
-                            raise RuntimeError(f"Could not disable shell context on the {role} terminal")
+                        prepare_callback_terminal(provider, session, role)
                 # Callback images offer ECDSA; the standard Academy images
                 # restrict SSH to RSA. Pin the key Guacamole negotiates.
                 host_algorithm = "ecdsa" if lab.kind == "callback" else "rsa"
@@ -93,8 +177,8 @@ def execute_job(factory, settings, provider, job_id):
                     outcomes = [(role, *provider.exec(session, [*pair_command[:3], role, *pair_command[4:]], role=role))
                                 for role in targets]
                     if job.action == "start" and not any(result != 0 for _, result, _ in outcomes):
-                        arm_command = ["/usr/local/sbin/academy-pair-lab", "arm", job.argument,
-                                       "listener", session.ip, session.secondary_ip]
+                        arm_command = ["python3", "-c", _CALLBACK_ARM_EXERCISE,
+                                       job.argument, session.ip, session.secondary_ip]
                         outcomes.append(("listener", *provider.exec(session, arm_command, role="listener")))
                     if job.action == "check":
                         code = next((result for _, result, _ in outcomes if result not in (0, 1)),

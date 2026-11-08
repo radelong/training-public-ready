@@ -1,0 +1,164 @@
+{
+  "id": "callback-troubleshooting",
+  "title": "Two-VM Callback Troubleshooting Lab",
+  "description": "Trace and repair a harmless synthetic HTTP heartbeat between an isolated Ubuntu Sender and Listener. Practice Linux service, address, port, routing, name-resolution and firewall troubleshooting.",
+  "kind": "callback",
+  "template_id": 9251,
+  "secondary_template_id": 9252,
+  "cores": 2,
+  "memory": 4096,
+  "drills": [
+    {
+      "id": "callback-01-sender-service",
+      "title": "Sender service is stopped",
+      "brief": "The Listener is healthy, but no synthetic heartbeat arrives. Check the Sender service, process and logs.",
+      "goal": "Restore the Sender service and verify a new heartbeat reaches the Listener.",
+      "tools": "systemctl, journalctl, ss, curl",
+      "time": "10 min",
+      "estimated_minutes": 10,
+      "topics": [
+        "systemd services",
+        "service logs",
+        "HTTP health checks"
+      ],
+      "level": "1"
+    },
+    {
+      "id": "callback-02-destination",
+      "title": "Sender targets the wrong address",
+      "brief": "The Sender service is active, but its configured destination is another address on the isolated practice subnet.",
+      "goal": "Correct the Listener address and verify a new heartbeat arrives.",
+      "tools": "ip address, getent, curl, systemctl",
+      "time": "10 min",
+      "estimated_minutes": 10,
+      "topics": [
+        "IPv4 addressing",
+        "service configuration",
+        "connectivity testing"
+      ],
+      "level": "1"
+    },
+    {
+      "id": "callback-03-port",
+      "title": "Listener port mismatch",
+      "brief": "The Listener listens on TCP 8080 while the Sender is configured to use a different port.",
+      "goal": "Correct the Sender port and restore heartbeat delivery.",
+      "tools": "ss, curl, journalctl",
+      "time": "10 min",
+      "estimated_minutes": 10,
+      "topics": [
+        "TCP ports",
+        "listening sockets",
+        "HTTP troubleshooting"
+      ],
+      "level": "1"
+    },
+    {
+      "id": "callback-04-listener-service",
+      "title": "Listener service is stopped",
+      "brief": "The Sender retries its HTTP request, but the Listener process is not running.",
+      "goal": "Restore the Listener service and verify a new request is recorded.",
+      "tools": "systemctl, journalctl, ss",
+      "time": "10 min",
+      "estimated_minutes": 10,
+      "topics": [
+        "systemd services",
+        "listening sockets",
+        "service recovery"
+      ],
+      "level": "1"
+    },
+    {
+      "id": "callback-05-bind-address",
+      "title": "Listener is bound to loopback",
+      "brief": "The Listener service is active on port 8080 but accepts connections only from its own loopback interface.",
+      "goal": "Bind the service to the practice interface and confirm the Sender can reach it.",
+      "tools": "ss, ip address, systemctl",
+      "time": "15 min",
+      "estimated_minutes": 15,
+      "topics": [
+        "bind addresses",
+        "loopback",
+        "service exposure"
+      ],
+      "level": "1"
+    },
+    {
+      "id": "callback-06-egress-firewall",
+      "title": "Sender firewall blocks outbound traffic",
+      "brief": "The Sender service and destination are correct, but a host OUTPUT rule drops TCP 8080 packets to the Listener.",
+      "goal": "Remove only the blocking egress rule and restore the heartbeat.",
+      "tools": "iptables -S, iptables -L -v, tcpdump",
+      "time": "15 min",
+      "estimated_minutes": 15,
+      "topics": [
+        "host firewalls",
+        "egress filtering",
+        "packet counters"
+      ],
+      "level": "2"
+    },
+    {
+      "id": "callback-07-ingress-firewall",
+      "title": "Listener firewall blocks inbound traffic",
+      "brief": "The Sender transmits to the right address and port, but a Listener INPUT rule drops packets from its paired Sender.",
+      "goal": "Remove only the blocking ingress rule and verify a new heartbeat.",
+      "tools": "iptables -S, iptables -L -v, tcpdump",
+      "time": "15 min",
+      "estimated_minutes": 15,
+      "topics": [
+        "host firewalls",
+        "ingress filtering",
+        "source addresses"
+      ],
+      "level": "2"
+    },
+    {
+      "id": "callback-08-route",
+      "title": "Invalid host route diverts traffic",
+      "brief": "The connected subnet route is correct, but a more-specific route sends the Listener traffic toward an unavailable next hop.",
+      "goal": "Remove the invalid route and restore direct reachability on the isolated subnet.",
+      "tools": "ip route, ip route get, ip neigh",
+      "time": "15 min",
+      "estimated_minutes": 15,
+      "topics": [
+        "Linux routing",
+        "route precedence",
+        "next-hop troubleshooting"
+      ],
+      "level": "2"
+    },
+    {
+      "id": "callback-09-name-resolution",
+      "title": "Listener hostname resolves to the wrong address",
+      "brief": "The Sender uses listener.training.local, but its local hosts entry maps the name to an unused practice address.",
+      "goal": "Correct local name resolution and verify the service recovers.",
+      "tools": "getent, /etc/hosts, curl, journalctl",
+      "time": "15 min",
+      "estimated_minutes": 15,
+      "topics": [
+        "name resolution",
+        "hosts files",
+        "application configuration"
+      ],
+      "level": "2"
+    },
+    {
+      "id": "callback-10-two-faults",
+      "title": "Capstone: diagnose two simultaneous faults",
+      "brief": "The Listener receives no heartbeat. The Sender uses the wrong TCP port and an invalid more-specific route. Fix both without weakening the isolated network policy.",
+      "goal": "Restore the route and TCP port, then verify a new source-validated heartbeat reaches the Listener.",
+      "tools": "ip route get, ip route, ss, curl, journalctl",
+      "time": "25 min",
+      "estimated_minutes": 25,
+      "topics": [
+        "route precedence",
+        "TCP ports",
+        "layered troubleshooting",
+        "verification"
+      ],
+      "level": "3"
+    }
+  ],
+  "enabled": true
+}
