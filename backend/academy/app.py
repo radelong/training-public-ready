@@ -603,9 +603,6 @@ def create_app(settings=None, provider=None):
         origin = request.headers.get("Origin")
         if origin and origin.rstrip("/") != str(request.base_url).rstrip("/"):
             raise HTTPException(403, "Cross-site sign-in blocked")
-        accepted = agreement.accepted_at(request.cookies.get(agreement.COOKIE_NAME, ""), s.master_key)
-        if accepted is None:
-            raise HTTPException(403, "Review and accept the user agreement before signing in")
         allocation_lock(db)
         key = digest(body.username.lower())
         failure = db.get(LoginFailure, key)
@@ -629,8 +626,6 @@ def create_app(settings=None, provider=None):
         token, csrf = secrets.token_urlsafe(48), secrets.token_urlsafe(32)
         db.add(Login(token_hash=digest(token), user_id=user.id, csrf=csrf, expires=now + 8 * 3600))
         db.add(Audit(user_id=user.id, action="login"))
-        db.add(Audit(user_id=user.id, action="terms_accepted",
-                     target=f"{agreement.VERSION}:{accepted}"))
         db.commit()
         response.set_cookie("academy_session", token, httponly=True, secure=s.cookie_secure,
                             samesite="strict", max_age=8 * 3600, path="/")

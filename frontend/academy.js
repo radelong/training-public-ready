@@ -1,5 +1,5 @@
 "use strict";
-const state={user:null,labs:[],sessions:[],results:[],page:"catalog",current:null,drill:null,detail:null,consoleUrls:{},consoleConnectingRoles:new Set(),consoleAutoFailedRoles:new Set(),termsVersion:null,videoItems:[],videoAvailable:false,videoAuthor:null,videoTopic:null,videoId:null,games:[],gameId:null,serverClockOffsetSeconds:null,assessment:null,assessmentIndex:null,assessmentCatalog:null};
+const state={user:null,labs:[],sessions:[],results:[],page:"catalog",current:null,drill:null,detail:null,consoleUrls:{},consoleConnectingRoles:new Set(),consoleAutoFailedRoles:new Set(),videoItems:[],videoAvailable:false,videoAuthor:null,videoTopic:null,videoId:null,games:[],gameId:null,serverClockOffsetSeconds:null,assessment:null,assessmentIndex:null,assessmentCatalog:null};
 const gameProgressChannel="academy-game-progress-v1";
 let pendingGameProgress=null,latestGameProgress=null,gameProgressTimer=null,gameProgressDrain=null,gameProgressErrorShown=false;
 const gameProgressFlushWaiters=new Map();
@@ -393,7 +393,7 @@ document.addEventListener("click",async event=>{
     else if(target.hasAttribute("data-admin-password-cancel"))$("admin-password-dialog").close();
   }catch(error){target.disabled=false;notify(error.message);}
 });
-$("login-form").addEventListener("submit",async e=>{e.preventDefault();const button=e.target.querySelector("button");button.disabled=true;$("login-error").textContent="";try{if(!$("terms-agree").checked)throw new Error("Review and agree to the user agreement before signing in");if(!state.termsVersion)throw new Error("The agreement could not be loaded; reload and try again");await api("/terms/accept","POST",{agree:true,version:state.termsVersion});const user=await api("/login","POST",{username:$("username").value,password:$("password").value});await enter(user);}catch(error){$("login-error").textContent=error.message;}finally{button.disabled=false;}});
+$("login-form").addEventListener("submit",async e=>{e.preventDefault();const button=e.target.querySelector("button");button.disabled=true;$("login-error").textContent="";try{const user=await api("/login","POST",{username:$("username").value,password:$("password").value});await enter(user);}catch(error){$("login-error").textContent=error.message;}finally{button.disabled=false;}});
 $("logout").addEventListener("click",async()=>{try{if(state.page==="games"&&state.gameId){if(!await confirmGameLeave())return;}else await flushGameProgress();await api("/logout","POST",{});latestGameProgress=null;location.assign("/login");}catch(error){notify(error.message);}});
 document.addEventListener("submit",async e=>{
   const form=e.target;
@@ -423,4 +423,4 @@ document.addEventListener("submit",async e=>{
 setInterval(async()=>{if(!state.user)return;try{const previous=JSON.stringify([state.labs,state.sessions,state.results]);await refresh();const changed=previous!==JSON.stringify([state.labs,state.sessions,state.results]);if(state.current){const latest=await api("/sessions/"+state.current);if(JSON.stringify(latest)!==JSON.stringify(state.detail)){state.detail=latest;if(latest.state==="ended"){notify("Lab ended. Your results are saved.");await page("sessions");}else {renderWorkspace();const roles=latest.paired?["sender","listener"]:["sender"];await Promise.all(roles.map(role=>connectConsole(false,role)));}}}else if(changed&&["catalog","sessions"].includes(state.page))render();}catch(error){if(state.user)notify(error.message);}},3000);
 setInterval(updateStartupProgress,1000);
 window.addEventListener("popstate",()=>{if(state.user)page(routePage(),true).catch(error=>notify(error.message));});
-(async()=>{try{const terms=await api("/terms/status");state.termsVersion=terms.version;$("terms-version").textContent=terms.version;try{await enter(await api("/me"));}catch{showLogin();}}catch{$("login-error").textContent="The agreement could not be loaded. Reload the page to try again.";showLogin();}})();
+(async()=>{try{await enter(await api("/me"));}catch{showLogin();}})();

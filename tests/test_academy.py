@@ -13,7 +13,7 @@ from cryptography.hazmat.primitives import padding
 from sqlalchemy import inspect, select
 from academy.app import create_app
 from academy.config import Settings
-from academy.db import (Lab, LabSession, Job, Result, ConsoleGrant, HttpTunnel, User, Login,
+from academy.db import (Lab, LabSession, Job, Result, ConsoleGrant, HttpTunnel, User, Login, Audit,
                         VideoCatalogOrder, database)
 from academy.db import BugReport
 from academy.worker import execute_job, tick
@@ -89,7 +89,7 @@ def user_client(system, name):
     return client
 
 
-def test_agreement_gates_sign_in_on_each_hostname(system):
+def test_agreement_page_remains_available_but_sign_in_does_not_require_acceptance(system):
     app, _, _, settings = system
     training = TestClient(app, base_url="https://academy.example.com")
     assert "Practice the work before the work depends on you" in training.get("/").text
@@ -98,7 +98,14 @@ def test_agreement_gates_sign_in_on_each_hostname(system):
     status = training.get("/api/terms/status")
     assert status.json() == {"accepted": False, "version": agreement.VERSION}
     credentials = {"username": "admin", "password": settings.admin_password}
-    assert training.post("/api/login", json=credentials).status_code == 403
+    login = training.post("/api/login", json=credentials)
+    assert login.status_code == 200
+    assert training.get("/api/terms/status").json()["accepted"] is False
+    with app.state.factory() as db:
+        assert db.scalar(select(Audit).where(Audit.action == "terms_accepted")) is None
+    assert "By logging in, you accept the" in training.get("/login").text
+    assert 'href="/terms"' in training.get("/login").text
+    assert 'id="terms-agree"' not in training.get("/login").text
     assert training.post("/api/terms/accept", json={
         "agree": False, "version": agreement.VERSION}).status_code == 422
     assert training.post("/api/terms/accept", json={
@@ -113,13 +120,14 @@ def test_agreement_gates_sign_in_on_each_hostname(system):
 
     other = TestClient(app, base_url="https://training.example.net")
     assert other.get("/api/terms/status").json()["accepted"] is False
-    assert other.post("/api/login", json=credentials).status_code == 403
+    assert other.post("/api/login", json=credentials).status_code == 200
     other.cookies.set(agreement.COOKIE_NAME, "tampered")
-    assert other.post("/api/login", json=credentials).status_code == 403
+    assert other.post("/api/login", json=credentials).status_code == 200
     other.cookies.clear()
     assert other.post("/api/terms/accept", json={
         "agree": True, "version": agreement.VERSION}).status_code == 200
     assert other.post("/api/login", json=credentials).status_code == 200
+
 
 
 def test_public_pages_and_protected_routes(system):
@@ -135,7 +143,8 @@ def test_public_pages_and_protected_routes(system):
     assert visitor.get("/lab-guide").headers["location"] == "/login?next=%2Flab-guide"
     assert visitor.get("/classes").headers["location"] == "/login?next=%2Fclasses"
     assert visitor.get("/login").status_code == 200
-    assert 'id="terms-agree"' in visitor.get("/login").text
+    assert 'id="terms-agree"' not in visitor.get("/login").text
+    assert "By logging in, you accept the" in visitor.get("/login").text
     assert visitor.get("/unknown").status_code == 404
     accepted = accepted_client(app)
     assert accepted.get("/labs", follow_redirects=False).headers["location"] == "/login?next=%2Flabs"

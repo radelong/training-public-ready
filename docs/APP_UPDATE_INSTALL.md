@@ -35,6 +35,8 @@ For classes with a combined pretest, verify a learner's first class entry shows 
 
 If this release includes the private class-pretest bundle, back up the database again before importing it. Copy `class-pretest-proposals.json` to a root-only directory on the services VM. Copy `scripts/import-class-pretests.py` from the extracted update into the API container, then run it once without `--apply`. Review every class title, module count and question count. The dry run must validate all records and report no database changes. Run it again with `--apply` only after the complete list matches the approved class set. The importer checks the exported class revision and published version, verifies other course content and slide assets, and publishes all class versions in one transaction. Existing enrollments retain their earlier versions.
 
+For update `2026.11.24.1`, confirm the login page displays “By logging in, you accept the User Agreement.” The agreement link must open `/terms`. Sign in with a test account without first requesting `/api/terms/status` or `/api/terms/accept`; successful login must create the normal `login` audit event without a new `terms_accepted` event. Existing agreement endpoints and historical audit rows remain available.
+
 ## Release handling
 
 Keep the `.tar.gz` and its SHA-256 sidecar together. Verify the sidecar before installation. Store prior completed releases as rollback points. Do not publish course answer keys, learner data, secrets, or VM images in the public source repository.

@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="/static/public.css?v=20261020-pages-1">
   <script src="/static/terminal-focus.js?v=20261010-1" defer></script>
 <script src="/static/lab-startup.js?v=20261022-lab-guide-2" defer></script>
-<script src="/static/academy.js?v=20261102-lab-guide-stream-1" defer></script>
+<script src="/static/academy.js?v=20261124-login-agreement-optional-1" defer></script>
 <link rel="stylesheet" href="/static/learning.css?v=20261028-admin-draft-remove-1">
 <script src="/static/learning.js?v=20261028-admin-course-purge-2" defer></script>
 <script src="/static/slide-viewer.js?v=20261022-single-slide-1" defer></script>
@@ -24,16 +24,10 @@
       <div class="login-topology"><span>CLIENT</span><i></i><span>ROUTER</span><i></i><span>SERVER</span></div></div>
     <p class="small">Training and lab services run in protected on-premises environments.</p>
   </section>
-  <section class="login-panel login-with-terms"><form id="login-form"><button class="theme-toggle login-toggle" type="button" data-theme-toggle>Dark mode</button><p class="eyebrow">WELCOME BACK</p><h2>Sign in to your academy</h2><p class="muted">Use the account provided by your training administrator.</p>
+  <section class="login-panel"><form id="login-form"><button class="theme-toggle login-toggle" type="button" data-theme-toggle>Dark mode</button><p class="eyebrow">WELCOME BACK</p><h2>Sign in to your academy</h2><p class="muted">Use the account provided by your training administrator.</p>
     <label for="username">Username</label><input id="username" name="username" autocomplete="username" required>
     <label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required>
-    <div class="login-agreement"><h3>User agreement</h3><p class="small muted">Review before signing in. <a href="/terms">Open the full agreement on its own page</a>.</p><div class="terms-copy" tabindex="0" aria-label="User agreement">
-      <h4>Authorized use</h4><p>Use the Academy only for training assigned or approved by your training administrator. Do not attempt to access another user's account, lab session, files, or administrative functions.</p>
-      <h4>Accounts and information</h4><p>Keep your sign-in credentials private. Do not put production passwords, classified information, personal records, or other sensitive operational data into lessons, exams, or lab VMs.</p>
-      <h4>Lab environments</h4><p>Lab VMs are temporary practice environments. They may expire, reset, or be deleted when a session ends. Save only work your instructor asks you to retain outside the lab. Do not use Academy systems to attack or disrupt other systems.</p>
-      <h4>Training records</h4><p>The Academy records account activity, class and exam progress, lab results, and administrative actions to operate training and assess readiness. Authorized administrators may review these records.</p>
-      <h4>Availability and conduct</h4><p>Training services may be unavailable during maintenance. Report security concerns or unexpected access to your training administrator. Misuse may result in loss of access.</p></div>
-      <label class="terms-check" for="terms-agree"><input id="terms-agree" type="checkbox" required><span>I have read and agree to the Training Academy user agreement.</span></label><p class="small muted">Agreement version <span id="terms-version">2026-10-20</span></p></div>
+    <p class="small muted">By logging in, you accept the <a href="/terms">User Agreement</a>.</p>
     <p id="login-error" role="alert" class="error"></p><button class="primary" type="submit">Sign in <span aria-hidden="true">&rarr;</span></button>
     <p class="small muted">Need an account? Contact your local training administrator.</p>
   </form></section>

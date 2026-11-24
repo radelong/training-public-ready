@@ -27,8 +27,6 @@ with app.state.factory() as db:
     db.get(Lab, "netlab").enabled = True
     db.commit()
 client = TestClient(app, base_url="https://testserver")
-version = client.get("/api/terms/status").json()["version"]
-assert client.post("/api/terms/accept", json={"agree": True, "version": version}).status_code == 200
 response = client.post("/api/login", json={"username":"admin","password":s.admin_password})
 assert response.status_code == 200, response.text
 client.headers["X-CSRF-Token"] = response.json()["csrf"]
